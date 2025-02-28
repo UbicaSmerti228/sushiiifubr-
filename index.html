@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Меню</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      -webkit-tap-highlight-color: transparent;
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    a:focus, button:focus, input:focus {
+      outline: none;
+    }
+    
+    :root {
+      --primary-color: #ff8b02;
+      --secondary-color: #e67e00;
+      --accent-color: #28a745;
+      --red-color: #dc3545;
+      --text-color: #333;
+      --bg-gradient: linear-gradient(135deg, #ffffff, #fff3e0);
+      --transition-time: 0.3s;
+      --toast-bg: rgba(0, 0, 0, 0.7);
+      --toast-color: #fff;
+    }
+    
+    body {
+      font-family: 'Roboto', Arial, sans-serif;
+      background: var(--bg-gradient);
+      color: var(--text-color);
+      line-height: 1.6;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      animation: fadeInPage 0.5s ease-out;
+      padding-top: 120px;
+    }
+    
+    @keyframes fadeInPage {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    
+    .shapes {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 50;
+    }
+    .shape {
+      position: absolute;
+      background: var(--primary-color);
+      opacity: 0.1;
+      border-radius: 8px;
+    }
+    
+    .toast-container {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 1200;
+    }
+    .toast {
+      background: var(--toast-bg);
+      color: var(--toast-color);
+      padding: 10px 20px;
+      border-radius: 5px;
+      margin-top: 10px;
+      opacity: 0;
+      transform: translateY(-20px);
+      animation: toastIn 0.5s forwards, toastOut 0.5s forwards 3s;
+    }
+    @keyframes toastIn {
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes toastOut {
+      to { opacity: 0; transform: translateY(-20px); }
+    }
+    
+    header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      z-index: 1000;
+      background-color: var(--primary-color);
+      color: #fff;
+      padding: 1rem 2rem;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      animation: slideDown 0.5s ease-out;
+      transition: transform 0.5s ease, opacity 0.5s ease;
+    }
+    @keyframes slideDown {
+      from { transform: translateY(-50px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    
+    header a.logo {
+      text-decoration: none;
+    }
+    header a.logo img {
+      height: 80px;
+      cursor: pointer;
+      transition: transform var(--transition-time) ease;
+    }
+    header a.logo img:hover {
+      transform: scale(1.05);
+    }
+    
+    .desktop-nav {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin: 10px auto;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+      padding: 5px 10px;
+      max-width: 600px;
+    }
+    .desktop-nav a {
+      color: #fff;
+      text-decoration: none;
+      font-size: 1.1rem;
+      padding: 0.7rem 1.5rem;
+      margin: 0 5px;
+      border-radius: 5px;
+      transition: background-color 0.3s ease, color 0.3s ease;
+      white-space: nowrap;
+    }
+    .desktop-nav a:hover,
+    .desktop-nav a.active {
+      background-color: rgba(255, 255, 255, 0.3);
+      font-weight: bold;
+    }
+    
+    .hamburger {
+      display: none;
+      cursor: pointer;
+      width: 30px;
+      height: 30px;
+      margin-top: -5px;
+    }
+    .hamburger span {
+      display: block;
+      height: 3px;
+      background: #fff;
+      margin: 5px 0;
+      border-radius: 3px;
+    }
+    .mobile-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      right: 0;
+      width: 100%;
+      background: var(--primary-color);
+      text-align: center;
+      z-index: 1100;
+      opacity: 0;
+      transform: translateY(-20px);
+      transition: opacity 0.5s ease, transform 0.5s ease; /* Плавное выдвижение */
+    }
+    .mobile-menu.show {
+      display: flex;
+      flex-direction: column;
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .mobile-menu a {
+      padding: 15px 0;
+      color: #fff;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(255,255,255,0.2);
+      white-space: nowrap;
+    }
+    .mobile-menu a:last-child {
+      border-bottom: none;
+    }
+    .mobile-menu a.active {
+      background-color: rgba(255, 255, 255, 0.3); /* Выделение активной категории */
+      font-weight: bold;
+    }
+    
+    .search-container {
+      position: relative;
+      margin: 5px 10px;
+    }
+    .product-search {
+      width: 200px;
+      padding: 0.5rem 1rem 0.5rem 2.5rem;
+      border: 1px solid #ccc;
+      border-radius: 25px;
+      font-size: 1rem;
+      transition: border var(--transition-time) ease;
+    }
+    .product-search:focus {
+      border-color: var(--primary-color);
+    }
+    .search-container::before {
+      content: "🔍";
+      position: absolute;
+      left: 10px; /* Исправлено положение */
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 1rem;
+      color: #999;
+    }
+    
+    .filter-container {
+      padding: 10px 30px;
+      margin: 20px auto;
+      max-width: 1200px;
+      background-color: #fff;
+      border: 1px solid #ccc;
+      border-radius: 10px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    @media (min-width: 769px) {
+      .filter-container {
+        flex-direction: row;
+        align-items: center;
+        justify-content: center;
+      }
+    }
+    .filter-container .filter-row {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .filter-container label,
+    .filter-container button {
+      white-space: nowrap;
+    }
+    .filter-container input {
+      width: 80px;
+      padding: 5px;
+      margin: 0 5px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+    .filter-container button {
+      padding: 5px 10px;
+      border: none;
+      background: var(--primary-color);
+      color: #fff;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background var(--transition-time) ease;
+    }
+    .filter-container button:hover {
+      background: var(--secondary-color);
+    }
+    @media (max-width: 768px) {
+      .filter-container {
+        margin-top: 10px;
+      }
+    }
+    
+    @media (min-width: 769px) {
+      .cart .cart-count {
+        width: 28px;
+        height: 28px;
+        line-height: 28px;
+        font-size: 1.3rem;
+      }
+    }
+    
+    main .container {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 30px;
+      padding: 30px;
+      max-width: 1200px;
+      margin: 20px auto 0;
+    }
+    
+    .card {
+      background-color: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      transition: opacity 0.3s ease, transform 0.2s ease, box-shadow 0.2s ease;
+      display: block;
+      opacity: 1;
+      flex-direction: column;
+      cursor: pointer;
+    }
+    .card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+    }
+    .card img {
+      width: 100%;
+      height: 200px;
+      object-fit: cover;
+      transition: transform 0.3s ease;
+    }
+    .card img:hover {
+      transform: scale(1.05);
+    }
+    .card-body {
+      padding: 20px;
+      text-align: center;
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .card-body h3 {
+      font-size: 1.5rem;
+      color: var(--primary-color);
+      margin-bottom: 15px;
+    }
+    .composition {
+      max-height: 0;
+      overflow: hidden;
+      font-size: 0.9rem;
+      color: #555;
+      margin-bottom: 10px;
+      transition: max-height 0.5s ease;
+    }
+    .composition.active {
+      max-height: 200px;
+    }
+    .price {
+      font-size: 1.2rem;
+      font-weight: bold;
+      margin-bottom: 20px;
+      color: var(--text-color);
+    }
+    .btn {
+      background-color: var(--primary-color);
+      color: white;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 1.1rem;
+      transition: background-color var(--transition-time) ease, transform var(--transition-time) ease;
+      width: 100%;
+      margin-top: auto;
+    }
+    .btn:hover {
+      background-color: var(--secondary-color);
+      transform: scale(1.02);
+    }
+    
+    .cart {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background-color: var(--primary-color);
+      color: #fff;
+      padding: 15px;
+      border-radius: 50%;
+      font-size: 2rem;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      box-shadow: 0 6px 15px rgba(0,0,0,0.2);
+      z-index: 2000;
+      transition: transform var(--transition-time) ease;
+    }
+    .cart:hover {
+      transform: scale(1.1);
+    }
+    .cart .cart-count {
+      position: absolute;
+      top: -5px;
+      right: -5px;
+      background-color: var(--secondary-color);
+      color: white;
+      font-size: 1.2rem;
+      border-radius: 50%;
+      box-shadow: 0 0 10px rgba(0,0,0,0.2);
+      z-index: 2100;
+      width: 24px;
+      height: 24px;
+      line-height: 24px;
+      text-align: center;
+    }
+    
+    #overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      backdrop-filter: blur(5px);
+      background-color: rgba(255, 255, 255, 0.3);
+      z-index: 1050;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+      display: none;
+    }
+    #overlay.active {
+      display: block;
+      opacity: 1;
+    }
+    
+    .cart-popup {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background-color: #fff;
+      border-radius: 15px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+      width: 90%;
+      max-width: 600px;
+      z-index: 1100;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+      display: none;
+      overflow-y: auto;
+      max-height: 70vh;
+    }
+    .cart-popup.active {
+      display: block;
+      animation: slideInCart 0.5s ease-out;
+      opacity: 1;
+    }
+    .cart-popup.closing {
+      animation: slideOutCart 0.5s forwards;
+    }
+    @keyframes slideInCart {
+      from { transform: translate(-50%, -60%); opacity: 0; }
+      to { transform: translate(-50%, -50%); opacity: 1; }
+    }
+    @keyframes slideOutCart {
+      from { transform: translate(-50%, -50%); opacity: 1; }
+      to { transform: translate(-50%, -60%); opacity: 0; }
+    }
+    
+    .cart-popup-header {
+      background-color: #fff;
+      padding: 15px 25px;
+      border-top-left-radius: 20px;
+      border-top-right-radius: 20px;
+    }
+    .cart-popup-header h3 {
+      margin-bottom: 15px;
+      color: var(--primary-color);
+      text-align: center;
+    }
+    .cart-popup-header ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .cart-popup ul {
+      list-style: none;
+      padding: 0 25px 15px 25px;
+      margin: 0;
+    }
+    .cart-popup ul li {
+      padding: 10px;
+      background-color: #f4f4f4;
+      margin-bottom: 10px;
+      border-radius: 5px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: opacity 0.3s ease, height 0.3s ease;
+    }
+    .cart-popup li span {
+      flex-grow: 1;
+    }
+    .minus-btn,
+    .plus-btn {
+      background-color: var(--primary-color);
+      border: none;
+      color: #fff;
+      font-size: 1.4rem;
+      width: 35px;
+      height: 35px;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: background-color 0.3s ease, transform 0.3s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .minus-btn:hover,
+    .plus-btn:hover {
+      background-color: var(--secondary-color);
+    }
+    .cart-popup ul li div {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .sticks-control {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 15px 25px;
+      padding: 10px;
+      background-color: #f4f4f4;
+      border-radius: 5px;
+    }
+    .sticks-control span {
+      font-size: 1rem;
+    }
+    
+    .payment-method {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin: 15px 25px;
+      padding: 10px;
+      background-color: #f4f4f4;
+      border-radius: 5px;
+    }
+    .delivery-option, .payment-option {
+      display: inline-block;
+      padding: 5px 10px;
+      border: 2px solid var(--primary-color);
+      border-radius: 20px;
+      margin-right: 10px;
+      cursor: pointer;
+      transition: background-color 0.3s ease, color 0.3s ease;
+      white-space: nowrap;
+    }
+    .delivery-option:active, .payment-option:active {
+      background-color: var(--secondary-color);
+      color: #fff;
+    }
+    .delivery-option.selected, .payment-option.selected {
+      background-color: var(--primary-color);
+      color: #fff;
+    }
+    .delivery-option input, .payment-option input {
+      display: none;
+    }
+    .clear-btn {
+      background-color: var(--primary-color);
+      color: #fff;
+      padding: 16px 24px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 1.3rem;
+      transition: background-color 0.3s ease;
+      margin: 10px 25px 0 25px;
+      width: calc(100% - 50px);
+    }
+    .clear-btn:hover {
+      background-color: var(--secondary-color);
+    }
+    #checkout-btn {
+      background-color: var(--red-color);
+      color: #fff;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background-color 0.3s ease, transform 0.3s ease;
+      width: calc(100% - 50px);
+      margin: 10px 25px 15px 25px;
+    }
+    #checkout-btn:hover {
+      background-color: #c82333;
+      transform: scale(1.05);
+    }
+    
+    @media (max-width: 768px) {
+      header {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem 1rem;
+      }
+      header a.logo img {
+        height: 50px;
+      }
+      .desktop-nav {
+        display: none;
+      }
+      .hamburger {
+        display: block;
+      }
+      .search-container {
+        flex: 1;
+        text-align: center;
+      }
+      main .container {
+        grid-template-columns: repeat(2, 1fr); /* По 2 товара в строке */
+        gap: 20px;
+        padding: 15px;
+      }
+      .filter-container {
+        width: 90%;
+        padding: 10px;
+      }
+      .product-search {
+        padding-left: 2.5rem;
+      }
+      .shapes .shape:nth-child(n+5) {
+        display: none;
+      }
+      .card-body h3 {
+        font-size: 1.5rem;
+      }
+      .price {
+        font-size: 1.2rem;
+      }
+      .btn {
+        font-size: 1.1rem;
+        padding: 12px;
+      }
+      .cart {
+        width: 60px;
+        height: 60px;
+        font-size: 2rem;
+      }
+      .cart .cart-count {
+        width: 28px;
+        height: 28px;
+        line-height: 28px;
+        font-size: 1.3rem;
+      }
+      .search-container::before {
+        left: 30px; /* Исправлено для мобильных */
+      }
+    }
+    
+    @media (max-width: 480px) {
+      header {
+        padding: 0.5rem;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .hamburger {
+        align-self: center;
+      }
+      .search-container {
+        order: 2;
+        flex: 1;
+        text-align: center;
+      }
+      .logo {
+        order: 1;
+      }
+      .hamburger {
+        order: 3;
+      }
+      main .container {
+        grid-template-columns: repeat(2, 1fr); /* По 2 товара в строке */
+        gap: 15px;
+        padding: 10px;
+      }
+      .filter-container {
+        margin-top: 120px;
+      }
+      .product-search {
+        font-size: 0.9rem;
+        padding: 0.4rem 1rem 0.4rem 2.5rem;
+      }
+      .card-body h3 {
+        font-size: 1.3rem;
+      }
+      .price {
+        font-size: 1rem;
+      }
+      .btn {
+        font-size: 1rem;
+        padding: 10px;
+      }
+      .cart {
+        width: 50px;
+        height: 50px;
+        font-size: 1.5rem;
+        bottom: 1rem;
+        right: 1rem;
+      }
+      .cart-popup {
+        width: 95%;
+        max-width: 400px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shapes">
+    <div class="shape" style="top:10%; left:5%; width:80px; height:80px; border-radius:50%;"></div>
+    <div class="shape" style="top:20%; left:80%; width:60px; height:60px;"></div>
+    <div class="shape" style="top:70%; left:10%; width:80px; height:80px; border-radius:50%;"></div>
+    <div class="shape" style="top:50%; left:50%; width:50px; height:50px; transform:rotate(45deg);"></div>
+    <div class="shape" style="top:80%; left:70%; width:60px; height:60px;"></div>
+    <div class="shape" style="top:30%; left:40%; width:80px; height:80px; border-radius:50%;"></div>
+    <div class="shape" style="top:60%; left:20%; width:50px; height:50px; transform:rotate(45deg);"></div>
+    <div class="shape" style="top:10%; left:70%; width:60px; height:60px;"></div>
+  </div>
+  
+  <div class="toast-container" id="toastContainer"></div>
+  
+  <div id="overlay"></div>
+  
+  <header>
+    <a href="#" class="logo"><img src="https://sun9-64.userapi.com/impg/3-MmeFMzVdBnFyDd_rgKu3OkY3RsTkh2VHXmww/a2TfXaTyOwg.jpg?size=2048x2048&quality=95&sign=29026eb5806b195cde9c6a8521e7ae53&type=album" alt="Логотип"></a>
+    <nav class="desktop-nav">
+      <a href="javascript:void(0)" class="active" onclick="filterCategory('all')">Все блюда</a>
+      <a href="javascript:void(0)" onclick="filterCategory('pizzas')">Пиццы</a>
+      <a href="javascript:void(0)" onclick="filterCategory('rolls')">Роллы</a>
+      <a href="javascript:void(0)" onclick="filterCategory('fastfood')">Фастфуд</a>
+      <a href="javascript:void(0)" onclick="filterCategory('sets')">Сеты</a>
+    </nav>
+    <div class="search-container">
+      <input type="text" id="search-input" class="product-search" placeholder="Поиск..." onkeyup="searchProducts()">
+    </div>
+    <div class="hamburger" onclick="toggleMobileMenu()">
+      <span></span>
+      <span></span>
+      <span></span>
+    </div>
+    <div id="mobileMenu" class="mobile-menu">
+      <a href="javascript:void(0)" onclick="filterCategory('all'); toggleMobileMenu();">Все блюда</a>
+      <a href="javascript:void(0)" onclick="filterCategory('pizzas'); toggleMobileMenu();">Пиццы</a>
+      <a href="javascript:void(0)" onclick="filterCategory('rolls'); toggleMobileMenu();">Роллы</a>
+      <a href="javascript:void(0)" onclick="filterCategory('fastfood'); toggleMobileMenu();">Фастфуд</a>
+      <a href="javascript:void(0)" onclick="filterCategory('sets'); toggleMobileMenu();">Сеты</a>
+    </div>
+  </header>
+  
+  <div class="filter-container">
+    <div class="filter-row">
+      <label>Цена от: <input type="number" id="priceMin" value="0"> ₽</label>
+      <label>до: <input type="number" id="priceMax" value="1000"> ₽</label>
+      <button onclick="filterByPrice()">Фильтровать</button>
+    </div>
+  </div>
+  
+  <main>
+    <div class="container">
+      <div class="card pizzas">
+        <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTWke5iDtS357qf3V0uukdmkCwwP_LNP-zwKQ&s" alt="Пицца 4 сыра">
+        <div class="card-body" onclick="toggleComposition(this)">
+          <h3>Пицца 4 сыра</h3>
+          <div class="composition">Состав: Смесь моцареллы, горгонзолы, пармезана и дор блю</div>
+          <div class="price">479 ₽</div>
+          <button class="btn" onclick="event.stopPropagation(); addToCart(this, 'Пицца 4 сыра', 479)">В корзину</button>
+        </div>
+      </div>
+      <div class="card rolls">
+        <img src="https://shikimori.one/system/characters/original/206278.jpg" alt="Ролл Дракон">
+        <div class="card-body" onclick="toggleComposition(this)">
+          <h3>Ролл Дракон</h3>
+          <div class="composition">Состав: Угорь, авокадо, огурцы и соус унаги</div>
+          <div class="price">589 ₽</div>
+          <button class="btn" onclick="event.stopPropagation(); addToCart(this, 'Ролл Дракон', 589)">В корзину</button>
+        </div>
+      </div>
+      <div class="card fastfood">
+        <img src="https://shikimori.one/system/characters/original/206277.jpg" alt="Буррито с курицей">
+        <div class="card-body" onclick="toggleComposition(this)">
+          <h3>Буррито с курицей</h3>
+          <div class="composition">Состав: Курица, рис, фасоль, сыр, соус</div>
+          <div class="price">350 ₽</div>
+          <button class="btn" onclick="event.stopPropagation(); addToCart(this, 'Буррито с курицей', 350)">В корзину</button>
+        </div>
+      </div>
+      <div class="card fastfood">
+        <img src="https://i.pinimg.com/564x/d1/22/0e/d1220eb2aad7a875e254b9939194c926.jpg" alt="Чизбургер">
+        <div class="card-body" onclick="toggleComposition(this)">
+          <h3>Чизбургер</h3>
+          <div class="composition">Состав: Говядина, сыр, лук, кетчуп, горчица</div>
+          <div class="price">250 ₽</div>
+          <button class="btn" onclick="event.stopPropagation(); addToCart(this, 'Чизбургер', 250)">В корзину</button>
+        </div>
+      </div>
+      <div class="card sets">
+        <img src="https://www.meme-arsenal.com/memes/5e0b14a185b9154738dfc0924a7d1e64.jpg"Сет Калифорния">
+        <div class="card-body" onclick="toggleComposition(this)">
+          <h3>Сет Калифорния</h3>
+          <div class="composition">Состав: Калифорния ролл, Филадельфия ролл, Спайси тунец ролл</div>
+          <div class="price">1200 ₽</div>
+          <button class="btn" onclick="event.stopPropagation(); addToCart(this, 'Сет Калифорния', 1200)">В корзину</button>
+        </div>
+      </div>
+    </div>
+  </main>
+  
+  <div class="cart">
+    🛒
+    <div class="cart-count">0</div>
+  </div>
+  
+  <div class="cart-popup" id="cartPopup">
+    <div class="cart-popup-header">
+      <h3>Ваша корзина</h3>
+      <ul></ul>
+    </div>
+    <div class="sticks-control">
+      <span>Палочки:</span>
+      <button class="minus-btn" onclick="decrementSticks()">–</button>
+      <span id="sticks-count">0</span>
+      <button class="plus-btn" onclick="incrementSticks()">+</button>
+    </div>
+    <div style="margin: 0 25px; text-align: center;">
+      <label class="delivery-option selected">
+        <input type="radio" name="delivery-option" value="pickup" checked> Самовывоз
+      </label>
+      <label class="delivery-option">
+        <input type="radio" name="delivery-option" value="delivery"> Доставка
+      </label>
+    </div>
+    <input type="text" id="delivery-address" placeholder="Введите адрес доставки" style="display: none; margin: 10px 25px; width: calc(100% - 50px); padding: 5px; border: 1px solid #ccc; border-radius: 5px;">
+    <div class="payment-method">
+      <label class="payment-option selected">
+        <input type="radio" name="payment-method" value="card" checked> Карта
+      </label>
+      <label class="payment-option">
+        <input type="radio" name="payment-method" value="cash"> Наличка
+      </label>
+      <label class="payment-option">
+        <input type="radio" name="payment-method" value="transfer"> Перевод
+      </label>
+    </div>
+    <button class="clear-btn" onclick="checkoutOrder()">Оформить заказ</button>
+    <button id="checkout-btn">Очистить корзину</button>
+  </div>
+  
+  <script>
+    const cart = {};
+    let activeCategory = 'all';
+    let sticks = 0;
+    
+    function addToCart(el, item, price) {
+      if (!cart[item]) {
+        cart[item] = { quantity: 0, price };
+      }
+      cart[item].quantity++;
+      updateCart();
+      updateCartPopup();
+      showToast(item + ' добавлен в корзину');
+    }
+    
+    function incrementCart(item) {
+      if (cart[item]) {
+        cart[item].quantity++;
+        updateCart();
+        updateCartPopup();
+        showToast('Добавлена ещё 1 позиция ' + item);
+      }
+    }
+    
+    function decrementCart(item) {
+      if (cart[item]) {
+        if (cart[item].quantity > 1) {
+          cart[item].quantity--;
+          showToast('Одна позиция ' + item + ' удалена');
+        } else {
+          delete cart[item];
+          showToast(item + ' удален из корзины');
+        }
+        updateCart();
+        updateCartPopup();
+      }
+    }
+    
+    function updateCart() {
+      const cartCountElement = document.querySelector('.cart .cart-count');
+      cartCountElement.textContent = Object.values(cart).reduce((sum, obj) => sum + obj.quantity, 0);
+    }
+    
+    function updateCartPopup() {
+      const cartList = document.querySelector('.cart-popup-header ul');
+      cartList.innerHTML = '';
+      let total = 0;
+      for (const [item, { quantity, price }] of Object.entries(cart)) {
+        const li = document.createElement('li');
+        li.setAttribute("data-item", item);
+        li.innerHTML = 
+          '<span>' + item + ' (' + quantity + ' шт.) - ' + (price * quantity) + ' ₽</span>' +
+          '<div>' +
+            '<button class="minus-btn" onclick="decrementCart(\'' + item + '\')">–</button>' +
+            '<button class="plus-btn" onclick="incrementCart(\'' + item + '\')">+</button>' +
+          '</div>';
+        cartList.appendChild(li);
+        total += price * quantity;
+      }
+      const totalElement = document.createElement('li');
+      totalElement.innerHTML = '<strong>Итого: ' + total + ' ₽</strong>';
+      cartList.appendChild(totalElement);
+      document.getElementById('sticks-count').textContent = sticks;
+    }
+    
+    function incrementSticks() {
+      sticks++;
+      updateCartPopup();
+      showToast('Добавлена 1 палочка');
+    }
+    
+    function decrementSticks() {
+      if (sticks > 0) {
+        sticks--;
+        updateCartPopup();
+        showToast('Удалена 1 палочка');
+      }
+    }
+    
+    const cartPopup = document.querySelector('.cart-popup');
+    cartPopup.addEventListener('wheel', (e) => {
+      e.stopPropagation();
+    });
+    
+    const overlay = document.getElementById('overlay');
+    const cartIcon = document.querySelector('.cart');
+    cartIcon.addEventListener('click', () => {
+      if (cartPopup.classList.contains('active')) {
+        closeCartPopup();
+      } else {
+        openCartPopup();
+      }
+    });
+    overlay.addEventListener('click', closeCartPopup);
+    
+    function openCartPopup() {
+      cartPopup.classList.add('active');
+      overlay.classList.add('active');
+      updateCartPopup();
+    }
+    
+    function closeCartPopup() {
+      cartPopup.classList.add('closing');
+      setTimeout(() => {
+        cartPopup.classList.remove('active', 'closing');
+        overlay.classList.remove('active');
+      }, 500);
+    }
+    
+    function filterCategory(category) {
+      const allCards = document.querySelectorAll('.card');
+      const navLinks = document.querySelectorAll('.desktop-nav a, .mobile-menu a');
+      navLinks.forEach(link => link.classList.remove('active'));
+      const clickedLink = document.querySelector('.desktop-nav a[onclick*="' + category + '"]') ||
+                            document.querySelector('.mobile-menu a[onclick*="' + category + '"]');
+      if (clickedLink) clickedLink.classList.add('active');
+      
+      allCards.forEach(card => {
+        card.style.opacity = 0;
+      });
+      
+      setTimeout(() => {
+        allCards.forEach(card => {
+          if (category === 'all' || card.classList.contains(category)) {
+            card.style.display = 'block';
+            setTimeout(() => {
+              card.style.opacity = 1;
+            }, 50);
+          } else {
+            card.style.display = 'none';
+          }
+        });
+      }, 300);
+      
+      activeCategory = category;
+    }
+    
+    function searchProducts() {
+      const input = document.getElementById('search-input').value.toLowerCase();
+      const cards = document.querySelectorAll('.card');
+      cards.forEach(card => {
+        const title = card.querySelector('.card-body h3').textContent.toLowerCase();
+        card.style.display = title.indexOf(input) > -1 ? 'block' : 'none';
+      });
+    }
+    
+    function filterByPrice() {
+      const min = parseInt(document.getElementById('priceMin').value) || 0;
+      const max = parseInt(document.getElementById('priceMax').value) || Infinity;
+      const cards = document.querySelectorAll('.card');
+      cards.forEach(card => {
+        const priceText = card.querySelector('.price').textContent;
+        const price = parseInt(priceText.replace(/[^0-9]/g, ''));
+        if (price >= min && price <= max) {
+          card.style.display = 'block';
+        } else {
+          card.style.display = 'none';
+        }
+      });
+    }
+    
+    function clearCart() {
+      for (let key in cart) {
+        delete cart[key];
+      }
+      updateCart();
+      updateCartPopup();
+      showToast('Корзина очищена');
+    }
+    
+    function checkoutOrder() {
+      const selectedOption = document.querySelector('input[name="delivery-option"]:checked').value;
+      const address = selectedOption === 'delivery' ? document.getElementById('delivery-address').value.trim() : '';
+      if (selectedOption === 'delivery' && !address) {
+        alert('Пожалуйста, укажите адрес доставки.');
+        return;
+      }
+      const paymentMethod = document.querySelector('input[name="payment-method"]:checked').value;
+      const phoneNumber = '+79374897407';
+      let message = 'Заказ:\n';
+      let total = 0;
+      for (const [item, { quantity, price }] of Object.entries(cart)) {
+        message += item + ' (' + quantity + ' шт.) - ' + (price * quantity) + ' ₽\n';
+        total += price * quantity;
+      }
+      if (sticks > 0) {
+        message += 'Палочки: ' + sticks + ' шт.\n';
+      }
+      message += '\nСпособ получения: ' + (selectedOption === 'delivery' ? 'Доставка' : 'Самовывоз');
+      if (selectedOption === 'delivery') {
+        message += '\nАдрес доставки: ' + address;
+      }
+      message += '\nМетод оплаты: ' + (paymentMethod === 'card' ? 'Карта' : (paymentMethod === 'cash' ? 'Наличка' : 'Перевод'));
+      message += '\nИтого: ' + total + ' ₽';
+      const whatsappUrl = 'https://api.whatsapp.com/send?phone=' + phoneNumber + '&text=' + encodeURIComponent(message);
+      window.open(whatsappUrl, '_blank');
+    }
+    
+    document.getElementById('checkout-btn').addEventListener('click', () => {
+      clearCart();
+    });
+    
+    document.querySelectorAll('input[name="delivery-option"]').forEach(input => {
+      input.addEventListener('change', function() {
+        document.querySelectorAll('.delivery-option').forEach(label => label.classList.remove('selected'));
+        this.parentElement.classList.add('selected');
+        const deliveryAddressInput = document.getElementById('delivery-address');
+        deliveryAddressInput.style.display = this.value === 'delivery' ? 'block' : 'none';
+      });
+    });
+    
+    document.querySelectorAll('input[name="payment-method"]').forEach(input => {
+      input.addEventListener('change', function() {
+        document.querySelectorAll('.payment-option').forEach(label => label.classList.remove('selected'));
+        this.parentElement.classList.add('selected');
+      });
+    });
+    
+    const shapes = document.querySelectorAll('.shape');
+    let shapeData = [];
+    shapes.forEach(shape => {
+      let rect = shape.getBoundingClientRect();
+      let x = Math.random() * (window.innerWidth - rect.width);
+      let y = Math.random() * (window.innerHeight - rect.height);
+      let dx = (Math.random() * 2 - 1) * 1.5;
+      let dy = (Math.random() * 2 - 1) * 1.5;
+      shape.style.left = x + "px";
+      shape.style.top = y + "px";
+      shapeData.push({ element: shape, x, y, dx, dy, width: rect.width, height: rect.height });
+    });
+    
+    function updateShapes() {
+      shapeData.forEach(data => {
+        data.x += data.dx;
+        data.y += data.dy;
+        if (data.x < 0 || data.x + data.width > window.innerWidth) { data.dx = -data.dx; }
+        if (data.y < 0 || data.y + data.height > window.innerHeight) { data.dy = -data.dy; }
+        data.element.style.left = data.x + "px";
+        data.element.style.top = data.y + "px";
+      });
+      for (let i = 0; i < shapeData.length; i++) {
+        for (let j = i + 1; j < shapeData.length; j++) {
+          let a = shapeData[i], b = shapeData[j];
+          if (a.x < b.x + b.width && a.x + a.width > b.x &&
+              a.y < b.y + b.height && a.y + a.height > b.y) {
+            let tempDx = a.dx;
+            let tempDy = a.dy;
+            a.dx = b.dx;
+            a.dy = b.dy;
+            b.dx = tempDx;
+            b.dy = tempDy;
+          }
+        }
+      }
+      requestAnimationFrame(updateShapes);
+    }
+    
+    updateShapes();
+    
+    function showToast(message) {
+      const toastContainer = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.textContent = message;
+      toastContainer.appendChild(toast);
+      setTimeout(() => {
+        toastContainer.removeChild(toast);
+      }, 3500);
+    }
+    
+    function toggleMobileMenu() {
+      const menu = document.getElementById('mobileMenu');
+      if (menu.classList.contains('show')) {
+        menu.classList.remove('show');
+      } else {
+        menu.classList.add('show');
+      }
+    }
+    
+    function toggleComposition(cardBody) {
+      const comp = cardBody.querySelector('.composition');
+      if (comp) {
+        comp.classList.toggle('active');
+      }
+    }
+  </script>
+</body>
+</html>
