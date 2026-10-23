@@ -31,89 +31,9 @@ function newPoint(name) {
   };
 }
 
-function demo() {
-  const I = (name, unit, qty, price, waste = 0) => ({ id: uid(), name, unit, qty, price, waste, hist: [] });
-  const ing = [
-    I('Нори', 'шт', 50, 690), I('Рис для суши', 'кг', 1, 210), I('Рисовый уксус', 'л', 1, 380),
-    I('Лосось охлаждённый, филе', 'кг', 1, 2100, 18), I('Сыр сливочный', 'кг', 1, 1150), I('Огурец', 'кг', 1, 190, 8),
-    I('Авокадо', 'кг', 1, 780, 30), I('Снежный краб', 'кг', 1, 520), I('Икра тобико', 'кг', 0.5, 1350),
-    I('Угорь копчёный', 'кг', 1, 2600), I('Соус унаги', 'л', 1, 560), I('Японский майонез', 'кг', 1, 420),
-    I('Кунжут', 'кг', 1, 390)
-  ];
-  const by = n => ing.find(i => i.name.startsWith(n)).id;
-  const base = (rice = 45) => [['Нори', .5], ['Рис для суши', rice], ['Рисовый уксус', rice / 9]];
-  const D = (name, price, yieldG, parts, pack = 20) => ({ id: uid(), name, price, pack, yield: yieldG, sub: [],
-    parts: parts.map(([n, q]) => ({ ing: by(n), qty: Math.round(q * 10) / 10 })) });
-  const dishes = [
-    D('Филадельфия', 560, 250, [...base(), ['Лосось', 65], ['Сыр сливочный', 50], ['Огурец', 15]]),
-    D('Калифорния', 390, 220, [...base(), ['Снежный краб', 40], ['Икра тобико', 15], ['Огурец', 15], ['Авокадо', 15], ['Японский майонез', 10]]),
-    D('Каппа-маки', 160, 120, [...base(40), ['Огурец', 35], ['Кунжут', 2]], 15),
-    D('Сяке-маки', 320, 130, [...base(40), ['Лосось', 30]], 15),
-    D('Унаги-маки', 290, 130, [...base(40), ['Угорь копчёный', 30], ['Соус унаги', 5], ['Кунжут', 2]], 15),
-    D('Запечённый с крабом', 380, 240, [...base(), ['Снежный краб', 50], ['Огурец', 15], ['Сыр сливочный', 20], ['Японский майонез', 25], ['Икра тобико', 5], ['Соус унаги', 5]])
-  ];
-  const n = name => dishes.find(d => d.name === name).id;
-  dishes.push({ id: uid(), name: 'Сет «Классика»', price: 990, pack: 35, yield: 590, parts: [],
-    sub: [{ dish: n('Филадельфия'), n: 1 }, { dish: n('Калифорния'), n: 1 }, { dish: n('Каппа-маки'), n: 1 }] });
-
-  const qtys = obj => { const q = {}; for (const k in obj) q[n(k)] = obj[k]; return q; };
-  const a = newPoint('Центр');
-  a.sales.qty = qtys({ 'Филадельфия': 240, 'Калифорния': 180, 'Каппа-маки': 60, 'Сяке-маки': 90, 'Унаги-маки': 35, 'Запечённый с крабом': 150, 'Сет «Классика»': 70 });
-  a.fixed = [{ name: 'Аренда', sum: 45000, day: 5 }, { name: 'Зарплата повара и курьера с взносами', sum: 120000, day: 0 }, { name: 'Реклама ВКонтакте', sum: 10000, day: 1 }, { name: 'Свет, вода, интернет', sum: 8000, day: 20 }];
-  a.channels = [{ name: 'Агрегатор', share: 30, fee: 25 }];
-  a.pay = { share: 70, fee: 2 };
-  a.delivery = { check: 1300, share: 60, cost: 0 };
-  a.tax = { mode: 'usn6', rate: 6, reduce: 15000, fixed: 0, vat: 0 };
-
-  const b = newPoint('Микрорайон');
-  b.sales.qty = qtys({ 'Филадельфия': 110, 'Калифорния': 60, 'Каппа-маки': 25, 'Сяке-маки': 30, 'Унаги-маки': 10, 'Запечённый с крабом': 70, 'Сет «Классика»': 40 });
-  b.fixed = [{ name: 'Аренда', sum: 25000 }, { name: 'Зарплата с взносами', sum: 70000 }, { name: 'Реклама', sum: 5000 }];
-  b.pay = { share: 80, fee: 2 };
-  b.delivery = { check: 1200, share: 80, cost: 120 };
-  b.tax = { mode: 'usn6', rate: 6, reduce: 8000, fixed: 0, vat: 0 };
-
-  // склад и смены «Центра»: месяц назад пересчитали, потом закупки, списание, продажи и сегодняшняя инвентаризация
-  for (const k of ['Лосось', 'Сыр сливочный', 'Угорь', 'Икра тобико']) ing.find(i => i.name.startsWith(k)).ctrl = 'vsd';
-  const today = new Date(), dd = k => { const t = new Date(today); t.setDate(t.getDate() - k); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; };
-  const L = (n, qty, sum) => ({ ing: by(n), qty, sum });
-  let tt = 1;
-  const mv = (k, type, lines, extra = {}) => Object.assign({ id: uid(), t: tt++, date: dd(k), type, lines }, extra);
-  a.moves = [
-    mv(30, 'inv', [L('Лосось', 6), L('Сыр сливочный', 4), L('Рис для суши', 10), L('Нори', 200)].map(l => ({ ...l, expected: l.qty }))),
-    mv(24, 'in', [L('Лосось', 10, 21000), L('Сыр сливочный', 8, 9200), L('Рис для суши', 25, 5250)], { supplier: 'Рыбный двор' }),
-    mv(14, 'in', [L('Лосось', 10, 21000), L('Нори', 300, 4140)], { supplier: 'Рыбный двор' }),
-    mv(7, 'in', [L('Лосось', 10, 22000), L('Сыр сливочный', 8, 9200), L('Рис для суши', 15, 3150)], { supplier: 'Рыбный двор' }),
-    mv(9, 'out', [L('Лосось', 0.8)], { reason: 'Истёк срок' }),
-  ];
-  const sale = { id: uid(), t: tt++, date: dd(1), type: 'sale', lines: [], note: 'Продажи за месяц (пример)' };
-  a.moves.push(sale);
-  a.staff = [
-    { id: uid(), name: 'Айгуль', role: 'Сушист', kind: 'work', rate: 2500, pct: 0, perOrder: 0 },
-    { id: uid(), name: 'Рустам', role: 'Оператор', kind: 'work', rate: 1500, pct: 1, perOrder: 0 },
-    { id: uid(), name: 'Ильдар', role: 'Курьер', kind: 'self', rate: 0, pct: 0, perOrder: 150 }
-  ];
-  const sh = [[6, 11800, 3], [5, 12900, 5], [4, 14200, 6], [3, 16800, 8], [2, 15100, 7], [1, 12300, 4], [0, 13500, 5]];
-  a.shifts = sh.map(([k, rev, orders], j) => ({ id: uid(), date: dd(k), cash: Math.round(rev * .25), card: Math.round(rev * .45), sbp: Math.round(rev * .2), online: rev - Math.round(rev * .25) - Math.round(rev * .45) - Math.round(rev * .2),
-    start: 2000, withdrawn: j % 3 === 2 ? 5000 : 0, counted: undefined, exp: j === 3 ? [{ name: 'Пакеты и салфетки', sum: 640 }] : [],
-    staff: a.staff.map(st => ({ id: st.id, orders: st.role === 'Курьер' ? orders : 0 })), dishes: {} }));
-  a.shifts.forEach((x, j) => { x.counted = Math.max(0, x.start + x.cash - (x.exp[0] ? x.exp[0].sum : 0) - x.withdrawn - (j === 4 ? 300 : 0)); });
-
-  const out = migrate({ v: 3, org: 'Ролл-бар (пример)', target: 35, round: '10', ing, dishes, points: [a, b], cur: a.id, demo: true });
-  // расход по техкартам за месяц и сегодняшний пересчёт
-  const keepDb = db; db = out;
-  sale.lines = salesToLines(a.sales.qty);
-  // стартовый пересчёт по всем продуктам: на месяц с небольшим запасом, кроме тех, что пришли по накладным
-  const first = a.moves[0], got = new Set(a.moves.filter(m => m.type === 'in').flatMap(m => m.lines.map(l => l.ing)));
-  for (const l of sale.lines) if (!got.has(l.ing) && !first.lines.some(x => x.ing === l.ing)) {
-    const i = ing.find(x => x.id === l.ing), q = i.unit === 'шт' ? Math.ceil(l.qty * 1.25) : Math.ceil(l.qty * 1.25 * 10) / 10;
-    first.lines.push({ ing: l.ing, qty: q, expected: q });
-  }
-  const inv = mv(0, 'inv', [L('Лосось', 4.3), L('Сыр сливочный', 1.6), L('Рис для суши', 8.5), L('Нори', 52)]);
-  const before = balances(a, mkey(inv)).bal;
-  inv.lines.forEach(l => l.expected = Math.round((before.get(l.ing) || 0) * 1000) / 1000);
-  a.moves.push(inv);
-  db = keepDb;
-  return out;
+// пустая база для нового заведения
+function blank() {
+  return migrate({ v: 3, org: '', target: 35, round: '10', ing: [], dishes: [], points: [newPoint('Основная точка')] });
 }
 
 // старые сохранения (без точек, с категориями) поднимаются до текущей версии
@@ -349,14 +269,18 @@ function renderMenu() {
       <td class="r fc">${s.blank || !s.price ? '' : pct(Math.round(s.fc))}</td>
       <td class="r hide-m ${!s.blank && s.price && s.eff < 0 ? 'bad' : ''}">${s.blank || !s.price ? '' : rub(s.eff)}</td></tr>`).join('');
 
+  const emptyMenu = !db.dishes.length ? `<div class="card"><h2>Меню пока пустое</h2>
+      <p>Начните с продуктов: во вкладке <a href="#products">«Продукты»</a> заведите то, что закупаете, с ценой из накладной. Потом добавьте блюда и их состав.</p>
+      <p class="muted">Если у вас есть сайт доставки с файлом <code>menu.json</code>, загрузите его в <a href="#settings">«Настройках»</a>: блюда, цены и наборы подтянутся сами.</p></div>` : '';
   view.innerHTML = `
     <div class="head"><h1>Меню</h1><button class="main" id="add">Добавить блюдо</button></div>
-    <p class="lead">${db.dishes.length} ${plural(db.dishes.length, 'позиция', 'позиции', 'позиций')}.
+    ${emptyMenu}
+    <p class="lead"${db.dishes.length ? '' : ' hidden'}>${db.dishes.length} ${plural(db.dishes.length, 'позиция', 'позиции', 'позиций')}.
       ${over ? `<b class="bad">${over}</b> дороже цели ${db.target}% по фудкосту.` : `Все посчитанные блюда укладываются в ${db.target}%.`}
       ${loss ? `<b class="bad">${loss}</b> продаются в убыток после комиссий и налогов.` : ''}
       ${empty ? `У ${empty} не заполнен состав.` : ''}
-      ${db.demo ? '<br>Сейчас открыт пример с условными ценами. Замените на свои или загрузите меню сайта в «Настройках».' : ''}</p>
-    <div class="card">
+</p>
+    <div class="card"${db.dishes.length ? '' : ' hidden'}>
       <div class="bar">
         <input type="search" id="q" placeholder="Найти блюдо" value="${esc(menuState.q)}">
         <select id="show">
@@ -376,7 +300,7 @@ function renderMenu() {
   $('#show').onchange = e => { menuState.show = e.target.value; renderMenu(); };
   $('#sort').onchange = e => { menuState.sort = e.target.value; renderMenu(); };
   $('#add').onclick = () => {
-    const d = { id: uid(), name: 'Новое блюдо', price: 0, pack: 20, yield: 0, parts: [], sub: [] };
+    const d = { id: uid(), name: 'Новое блюдо', price: 0, pack: 0, yield: 0, parts: [], sub: [] };
     db.dishes.push(d); save(); location.hash = '#dish/' + d.id;
   };
   view.querySelector('tbody').onclick = e => { const tr = e.target.closest('tr.row'); if (tr) location.hash = '#dish/' + tr.dataset.id; };
@@ -648,7 +572,7 @@ function renderSales(report) {
     <div class="card">
       <h2>Вставить из кассы или Excel</h2>
       <p class="muted small">По строке на блюдо: название и количество через табуляцию, точку с запятой или пробел. Так выгружают отчёт «Продажи по блюдам» большинство касс: скопируйте два столбца и вставьте сюда.</p>
-      <textarea id="paste" rows="5" placeholder="Филадельфия	240&#10;Калифорния; 180"></textarea>
+      <textarea id="paste" rows="5" placeholder="Название блюда	количество"></textarea>
       <div class="bar"><button class="main" id="parse">Разобрать</button><label class="check"><input type="checkbox" id="add2"> прибавить к текущим</label></div>
       ${report || ''}
     </div>
@@ -1299,13 +1223,13 @@ function renderMoney() {
         <label class="fld">Пересчитано в конце<span class="inp"><input data-k="counted" type="number" min="0" step="any" value="${s.counted ?? ''}"><span class="unit">₽</span></span><span class="hint" id="sCash"></span></label>
       </div>
       <h3 style="margin-top:14px">Расходы из кассы</h3>
-      <div class="tw"><table class="edit"><tbody id="sExp">${(s.exp.length ? s.exp : [{ name: '', sum: '' }]).map(x => `<tr><td><input data-e="name" value="${esc(x.name)}" placeholder="Например, хлеб в магазине"></td><td class="r"><input class="n" data-e="sum" inputmode="decimal" value="${x.sum || ''}"><span class="unit">₽</span></td></tr>`).join('')}</tbody></table></div>
+      <div class="tw"><table class="edit"><tbody id="sExp">${(s.exp.length ? s.exp : [{ name: '', sum: '' }]).map(x => `<tr><td><input data-e="name" value="${esc(x.name)}" placeholder="На что потрачено"></td><td class="r"><input class="n" data-e="sum" inputmode="decimal" value="${x.sum || ''}"><span class="unit">₽</span></td></tr>`).join('')}</tbody></table></div>
       <div class="bar"><button class="ghost" id="sAddExp">Ещё расход</button></div>
       ${pt.staff.length ? `<h3>Кто работал</h3><div class="tw"><table class="edit"><tbody id="sStaff">${pt.staff.map(st => { const w = s.staff.find(x => x.id === st.id); return `<tr data-id="${st.id}"><td><label class="check" style="margin:0"><input type="checkbox"${w ? ' checked' : ''}> ${esc(st.name || 'Без имени')} <span class="muted small">${esc(st.role)}</span></label></td>
         <td class="r">${+st.perOrder ? `<input class="n s" data-o inputmode="numeric" value="${w ? w.orders || '' : ''}" placeholder="0"><span class="unit">заказов</span>` : ''}</td><td class="r muted" data-p></td></tr>`; }).join('')}</tbody></table></div>` : '<p class="muted small">Сотрудников пока нет, их можно добавить ниже в «Зарплате».</p>'}
       <h3 style="margin-top:14px">Что продано</h3>
       <p class="muted small">Вставьте отчёт кассы за смену: название и количество. Продукты по техкартам спишутся со склада.</p>
-      <textarea id="sDishes" rows="4" placeholder="Филадельфия	12&#10;Калифорния	8">${esc(dishesTxt)}</textarea>
+      <textarea id="sDishes" rows="4" placeholder="Название блюда	количество">${esc(dishesTxt)}</textarea>
       <div class="bar"><button class="main" id="sSave">Сохранить смену</button><span class="muted" id="sTotal"></span></div>
     </div>`;
     box.scrollIntoView({ block: 'start' });
@@ -1439,7 +1363,7 @@ function importMenu(items, opt = {}) {
     const w = String(it.description || '').match(/(\d+)\s*(?:гр|г)\b/i);
     let d = byName.get(key(it.name));
     if (d) { d.price = price || d.price; if (!d.yield && w) d.yield = +w[1]; updated++; }
-    else { d = { id: uid(), name: String(it.name).trim(), price, pack: 20, yield: w ? +w[1] : 0, parts: [], sub: [] }; db.dishes.push(d); byName.set(key(d.name), d); added++; }
+    else { d = { id: uid(), name: String(it.name).trim(), price, pack: 0, yield: w ? +w[1] : 0, parts: [], sub: [] }; db.dishes.push(d); byName.set(key(d.name), d); added++; }
     touched.push([d, it]);
   }
   let sets = 0, found = 0; const missing = new Map();
@@ -1476,7 +1400,7 @@ function renderSettings(report) {
     <div class="card">
       <h2>Заведение</h2>
       <div class="grid">
-        <label class="fld">Название<span class="inp"><input id="org" value="${esc(db.org)}" placeholder="Например, Фабрика суши"></span><span class="hint">в шапке, техкартах и заявке поставщику</span></label>
+        <label class="fld">Название<span class="inp"><input id="org" value="${esc(db.org)}" placeholder="Название кафе или доставки"></span><span class="hint">в шапке, техкартах и заявке поставщику</span></label>
         <label class="fld">Цель по фудкосту<span class="inp"><input id="target" type="number" min="5" max="90" value="${db.target}"><span class="unit">%</span></span><span class="hint">для доставки роллов обычно 30–35%</span></label>
         <label class="fld">Округлять цены<span class="inp"><select id="round"><option value="10">до 10 ₽</option><option value="50">до 50 ₽</option><option value="90">на 90: 490, 590</option></select></span></label>
       </div>
@@ -1508,7 +1432,7 @@ function renderSettings(report) {
         <label class="btn ghost">Открыть файл <input type="file" id="impFile" accept=".json,application/json" hidden></label>
       </div>
       <p class="muted small" id="linkInfo"></p>
-      <div class="bar"><button class="link" id="reset">начать с чистого листа</button><button class="link" id="demo">вернуть пример</button></div>
+      <div class="bar"><button class="link" id="reset">стереть все данные</button></div>
     </div>`;
 
   $('#round').value = db.round;
@@ -1571,8 +1495,7 @@ function renderSettings(report) {
     const snap = JSON.stringify(db); db = fresh; save(); syncHeader(); location.hash = '#menu'; route();
     note(msg, [['Ок', () => {}], ['Отменить', () => { db = JSON.parse(snap); save(); syncHeader(); route(); }]]);
   };
-  $('#reset').onclick = () => replace(migrate({ org: db.org, target: db.target, round: db.round, ing: [], dishes: [] }), 'Данные очищены.');
-  $('#demo').onclick = () => replace(demo(), 'Загружен пример.');
+  $('#reset').onclick = () => replace(Object.assign(blank(), { org: db.org, target: db.target, round: db.round }), 'Все данные стёрты.');
 }
 
 /* ---------- передача ссылкой: вся база сжимается в адрес ---------- */
@@ -1625,8 +1548,8 @@ function route(keep) {
   if (keep !== true) scrollTo(0, 0);
 }
 addEventListener('hashchange', () => location.hash.startsWith('#share=') ? takeShare() : route());
-try { db = JSON.parse(localStorage.getItem(KEY)); db = db ? migrate(db) : null; } catch (e) { db = null; }
-if (!db) db = demo();
+try { db = JSON.parse(localStorage.getItem(KEY)); db = db && !db.demo ? migrate(db) : null; } catch (e) { db = null; }
+if (!db) { db = blank(); save(); }
 syncHeader();
 if (location.hash.startsWith('#share=')) takeShare(); else route();
 
