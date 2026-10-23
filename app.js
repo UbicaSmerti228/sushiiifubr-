@@ -3,56 +3,108 @@
 const $ = s => document.querySelector(s);
 const view = $('#view');
 const KEY = 'fudkost:v1';
+const TEST = /[?&]test\b/.test(location.search);
 
-/* ---------- данные ---------- */
-// Продукт: цена за упаковку, размер упаковки, отход при обработке.
-// Блюдо: продукты в граммах/мл/шт + другие блюда (так собираются сеты) + упаковка в рублях.
+/* =========================================================================
+   Данные
+   Общие для всех точек: продукты и блюда (техкарты).
+   У каждой точки свои: продажи, остатки, постоянные расходы, каналы продаж,
+   эквайринг, доставка, налоги, план закупки.
+   ========================================================================= */
 const UNITS = { 'кг': { per: 'г', k: 1000 }, 'л': { per: 'мл', k: 1000 }, 'шт': { per: 'шт', k: 1 } };
 const uid = () => Math.random().toString(36).slice(2, 9);
 
+function newPoint(name) {
+  return {
+    id: uid(), name,
+    sales: { days: 30, qty: {} },
+    stock: {},                                    // продукт → { start, in, out, end, now }
+    fixed: [],                                    // постоянные расходы в месяц
+    channels: [],                                 // агрегаторы: { name, share %, fee % }
+    pay: { share: 0, fee: 0 },                    // оплата картой и СБП: доля %, комиссия %
+    delivery: { check: 0, share: 0, cost: 0 },    // средний чек, доля заказов с доставкой %, цена одной доставки
+    tax: { mode: 'none', rate: 6, reduce: 0, fixed: 0, vat: 0 },
+    plan: { days: 7, reserve: 10 }
+  };
+}
+
 function demo() {
-  const I = (name, unit, qty, price, waste = 0) => ({ id: uid(), name, unit, qty, price, waste });
+  const I = (name, unit, qty, price, waste = 0) => ({ id: uid(), name, unit, qty, price, waste, hist: [] });
   const ing = [
     I('Нори', 'шт', 50, 690), I('Рис для суши', 'кг', 1, 210), I('Рисовый уксус', 'л', 1, 380),
-    I('Лосось охлаждённый', 'кг', 1, 2100, 18), I('Сыр сливочный', 'кг', 1, 1150), I('Огурец', 'кг', 1, 190, 8),
+    I('Лосось охлаждённый, филе', 'кг', 1, 2100, 18), I('Сыр сливочный', 'кг', 1, 1150), I('Огурец', 'кг', 1, 190, 8),
     I('Авокадо', 'кг', 1, 780, 30), I('Снежный краб', 'кг', 1, 520), I('Икра тобико', 'кг', 0.5, 1350),
     I('Угорь копчёный', 'кг', 1, 2600), I('Соус унаги', 'л', 1, 560), I('Японский майонез', 'кг', 1, 420),
     I('Кунжут', 'кг', 1, 390)
   ];
-  const by = n => ing.find(i => i.name === n).id;
+  const by = n => ing.find(i => i.name.startsWith(n)).id;
   const base = (rice = 45) => [['Нори', .5], ['Рис для суши', rice], ['Рисовый уксус', rice / 9]];
-  const D = (name, category, price, parts, pack = 20) => ({ id: uid(), name, category, price, pack, sub: [],
+  const D = (name, price, yieldG, parts, pack = 20) => ({ id: uid(), name, price, pack, yield: yieldG, sub: [],
     parts: parts.map(([n, q]) => ({ ing: by(n), qty: Math.round(q * 10) / 10 })) });
   const dishes = [
-    D('Филадельфия', 'Классические роллы', 560, [...base(), ['Лосось охлаждённый', 65], ['Сыр сливочный', 50], ['Огурец', 15]]),
-    D('Калифорния', 'Классические роллы', 390, [...base(), ['Снежный краб', 40], ['Икра тобико', 15], ['Огурец', 15], ['Авокадо', 15], ['Японский майонез', 10]]),
-    D('Каппа-маки', 'Классические роллы', 160, [...base(40), ['Огурец', 35], ['Кунжут', 2]], 15),
-    D('Сяке-маки', 'Классические роллы', 320, [...base(40), ['Лосось охлаждённый', 30]], 15),
-    D('Унаги-маки', 'Классические роллы', 290, [...base(40), ['Угорь копчёный', 30], ['Соус унаги', 5], ['Кунжут', 2]], 15),
-    D('Запечённый с крабом', 'Запечённые роллы', 380, [...base(), ['Снежный краб', 50], ['Огурец', 15], ['Сыр сливочный', 20], ['Японский майонез', 25], ['Икра тобико', 5], ['Соус унаги', 5]])
+    D('Филадельфия', 560, 250, [...base(), ['Лосось', 65], ['Сыр сливочный', 50], ['Огурец', 15]]),
+    D('Калифорния', 390, 220, [...base(), ['Снежный краб', 40], ['Икра тобико', 15], ['Огурец', 15], ['Авокадо', 15], ['Японский майонез', 10]]),
+    D('Каппа-маки', 160, 120, [...base(40), ['Огурец', 35], ['Кунжут', 2]], 15),
+    D('Сяке-маки', 320, 130, [...base(40), ['Лосось', 30]], 15),
+    D('Унаги-маки', 290, 130, [...base(40), ['Угорь копчёный', 30], ['Соус унаги', 5], ['Кунжут', 2]], 15),
+    D('Запечённый с крабом', 380, 240, [...base(), ['Снежный краб', 50], ['Огурец', 15], ['Сыр сливочный', 20], ['Японский майонез', 25], ['Икра тобико', 5], ['Соус унаги', 5]])
   ];
   const n = name => dishes.find(d => d.name === name).id;
-  dishes.push({ id: uid(), name: 'Сет «Классика»', category: 'Сеты', price: 990, pack: 35, parts: [],
+  dishes.push({ id: uid(), name: 'Сет «Классика»', price: 990, pack: 35, yield: 590, parts: [],
     sub: [{ dish: n('Филадельфия'), n: 1 }, { dish: n('Калифорния'), n: 1 }, { dish: n('Каппа-маки'), n: 1 }] });
-  const sold = { 'Филадельфия': 240, 'Калифорния': 180, 'Каппа-маки': 60, 'Сяке-маки': 90, 'Унаги-маки': 35, 'Запечённый с крабом': 150, 'Сет «Классика»': 70 };
-  const qty = {}; for (const k in sold) qty[n(k)] = sold[k];
-  const stock = { [by('Лосось охлаждённый')]: { start: 6, in: 30, end: 4.3 }, [by('Сыр сливочный')]: { start: 4, in: 16, end: 1.6 } };
-  return migrate({ target: 35, ing, dishes, demo: true, sales: { days: 30, qty }, stock,
-    fixed: [{ name: 'Аренда', sum: 45000 }, { name: 'Зарплата повара и курьера', sum: 120000 }, { name: 'Реклама ВКонтакте', sum: 10000 }, { name: 'Свет, вода, интернет', sum: 8000 }],
-    channel: { share: 30, fee: 25 } });
+
+  const qtys = obj => { const q = {}; for (const k in obj) q[n(k)] = obj[k]; return q; };
+  const a = newPoint('Центр');
+  a.sales.qty = qtys({ 'Филадельфия': 240, 'Калифорния': 180, 'Каппа-маки': 60, 'Сяке-маки': 90, 'Унаги-маки': 35, 'Запечённый с крабом': 150, 'Сет «Классика»': 70 });
+  a.stock = { [by('Лосось')]: { start: 6, in: 30, out: 0.8, end: 4.3 }, [by('Сыр сливочный')]: { start: 4, in: 16, end: 1.6 } };
+  a.fixed = [{ name: 'Аренда', sum: 45000 }, { name: 'Зарплата повара и курьера с взносами', sum: 120000 }, { name: 'Реклама ВКонтакте', sum: 10000 }, { name: 'Свет, вода, интернет', sum: 8000 }];
+  a.channels = [{ name: 'Агрегатор', share: 30, fee: 25 }];
+  a.pay = { share: 70, fee: 2 };
+  a.delivery = { check: 1300, share: 60, cost: 0 };
+  a.tax = { mode: 'usn6', rate: 6, reduce: 15000, fixed: 0, vat: 0 };
+
+  const b = newPoint('Микрорайон');
+  b.sales.qty = qtys({ 'Филадельфия': 110, 'Калифорния': 60, 'Каппа-маки': 25, 'Сяке-маки': 30, 'Унаги-маки': 10, 'Запечённый с крабом': 70, 'Сет «Классика»': 40 });
+  b.fixed = [{ name: 'Аренда', sum: 25000 }, { name: 'Зарплата с взносами', sum: 70000 }, { name: 'Реклама', sum: 5000 }];
+  b.pay = { share: 80, fee: 2 };
+  b.delivery = { check: 1200, share: 80, cost: 120 };
+  b.tax = { mode: 'usn6', rate: 6, reduce: 8000, fixed: 0, vat: 0 };
+
+  return migrate({ v: 3, org: 'Ролл-бар (пример)', target: 35, round: '10', ing, dishes, points: [a, b], cur: a.id, demo: true });
 }
 
-// старые сохранения без новых полей не ломаются
+// старые сохранения (без точек, с категориями) поднимаются до текущей версии
 function migrate(d) {
-  d.target = d.target || 35;
+  d.target = +d.target || 35;
   d.round = d.round || '10';
-  d.sales = d.sales || { days: 30, qty: {} };
-  d.sales.qty = d.sales.qty || {};
-  d.stock = d.stock || {};
-  d.fixed = d.fixed || [];
-  d.channel = d.channel || { share: 0, fee: 0 };
-  d.plan = d.plan || { days: 7, reserve: 10 };
-  d.ing.forEach(i => { i.hist = i.hist || []; });
+  d.org = d.org || '';
+  d.ing = d.ing || []; d.dishes = d.dishes || [];
+  d.ing.forEach(i => { i.hist = i.hist || []; i.waste = +i.waste || 0; });
+  d.dishes.forEach(x => {
+    if (x.category === 'Роллы только в сетах') x.setOnly = true;
+    delete x.category;
+    x.parts = x.parts || []; x.sub = x.sub || [];
+    x.pack = +x.pack || 0; x.yield = +x.yield || 0;
+  });
+  if (!Array.isArray(d.points) || !d.points.length) {
+    const p = newPoint('Основная точка');
+    if (d.sales) p.sales = { days: +d.sales.days || 30, qty: d.sales.qty || {} };
+    if (d.stock) p.stock = d.stock;
+    if (d.fixed) p.fixed = d.fixed;
+    if (d.plan) p.plan = d.plan;
+    if (d.channel && +d.channel.share) p.channels = [{ name: 'Агрегатор', share: +d.channel.share, fee: +d.channel.fee || 0 }];
+    d.points = [p];
+  }
+  for (const k of ['sales', 'stock', 'fixed', 'plan', 'channel']) delete d[k];
+  d.points = d.points.map(p => Object.assign(newPoint(p.name || 'Точка'), p, {
+    sales: Object.assign({ days: 30, qty: {} }, p.sales),
+    pay: Object.assign({ share: 0, fee: 0 }, p.pay),
+    delivery: Object.assign({ check: 0, share: 0, cost: 0 }, p.delivery),
+    tax: Object.assign({ mode: 'none', rate: 6, reduce: 0, fixed: 0, vat: 0 }, p.tax),
+    plan: Object.assign({ days: 7, reserve: 10 }, p.plan)
+  }));
+  if (!d.points.some(p => p.id === d.cur)) d.cur = d.points[0].id;
+  d.v = 3;
   return d;
 }
 
@@ -61,91 +113,149 @@ try { db = JSON.parse(localStorage.getItem(KEY)); db = db ? migrate(db) : demo()
 let saveFail = false;
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(db)); saveFail = false; }
-  catch (e) { if (!saveFail) note('Браузер не даёт сохранять данные. Всё работает, но после закрытия вкладки пропадёт: сохраните файл во вкладке «Файлы».'); saveFail = true; }
+  catch (e) { if (!saveFail) note('Браузер не даёт сохранять данные. Всё работает, но после закрытия вкладки пропадёт: сохраните данные в «Настройках».'); saveFail = true; }
 }
+const P = () => db.points.find(p => p.id === db.cur) || db.points[0];
 
-/* ---------- расчёт ---------- */
+/* =========================================================================
+   Расчёт
+   ========================================================================= */
 const ingById = id => db.ing.find(i => i.id === id);
 const dishById = id => db.dishes.find(d => d.id === id);
-// цена за грамм / мл / штуку с учётом отхода
+const wasteK = i => 1 - Math.min(95, Math.max(0, +i.waste || 0)) / 100;
+const packOf = i => +i.qty > 0 ? (+i.price || 0) / +i.qty : 0;     // ₽ за кг / л / шт по накладной
+const toUnit = (v, i) => v / UNITS[i.unit].k;                        // г → кг, мл → л
+
+// цена грамма (мл, штуки) нетто: с учётом отхода при обработке
 function unitPrice(i) {
-  const k = UNITS[i.unit].k, w = Math.min(95, Math.max(0, +i.waste || 0));
   if (!(+i.qty > 0)) return 0;
-  return (+i.price || 0) / (+i.qty * k) / (1 - w / 100);
+  return (+i.price || 0) / (+i.qty * UNITS[i.unit].k) / wasteK(i);
 }
-// себестоимость блюда; упаковка считается только у того, что продаётся, а не у роллов внутри сета
+// себестоимость; упаковка считается только у того, что продаётся, а не у роллов внутри набора
 function cost(d, withPack = true, seen = new Set()) {
-  if (seen.has(d.id)) return NaN; // сет внутри самого себя
+  if (seen.has(d.id)) return NaN;
   seen.add(d.id);
   let s = 0;
   for (const p of d.parts) { const i = ingById(p.ing); if (i) s += unitPrice(i) * (+p.qty || 0); }
-  for (const x of d.sub || []) { const sd = dishById(x.dish); if (sd) s += cost(sd, false, new Set(seen)) * (+x.n || 0); }
+  for (const x of d.sub) { const sd = dishById(x.dish); if (sd) s += cost(sd, false, new Set(seen)) * (+x.n || 0); }
   return s + (withPack ? +d.pack || 0 : 0);
 }
-const hasRecipe = d => d.parts.length > 0 || (d.sub || []).length > 0;
-// блюда внутри набора, у которых ещё нет состава: пока они пустые, себестоимость набора занижена
+const hasRecipe = d => d.parts.length > 0 || d.sub.length > 0;
+const isSet = d => d.sub.length > 0;
 function missingIn(d, seen = new Set(), out = new Set()) {
   if (seen.has(d.id)) return out; seen.add(d.id);
-  for (const x of d.sub || []) {
-    const sd = dishById(x.dish); if (!sd) continue;
-    if (!hasRecipe(sd)) out.add(sd); else missingIn(sd, seen, out);
-  }
+  for (const x of d.sub) { const sd = dishById(x.dish); if (!sd) continue; if (!hasRecipe(sd)) out.add(sd); else missingIn(sd, seen, out); }
   return out;
 }
-function stats(d) {
-  const c = cost(d), price = +d.price || 0, miss = [...missingIn(d)];
-  return { c, price, fc: price ? c / price * 100 : NaN, margin: price - c, empty: !hasRecipe(d), miss,
-    blank: !hasRecipe(d) || miss.length > 0, // считать фудкост пока нельзя
-    rec: roundPrice(c / (db.target / 100)),
-    // средняя маржа с учётом заказов через агрегатор
-    eff: price - c - price * db.channel.share / 100 * db.channel.fee / 100,
-    agg: price * (1 - db.channel.fee / 100) - c };
+function usesIng(d, id, seen = new Set()) {
+  if (seen.has(d.id)) return false; seen.add(d.id);
+  return d.parts.some(p => p.ing === id) || d.sub.some(x => { const sd = dishById(x.dish); return sd && usesIng(sd, id, seen); });
 }
-// 10: до десятков вверх; 90: 490, 590; 50: до полтинника вверх
+const usesDish = (d, id) => d.sub.some(x => x.dish === id);
+
+// Доли от цены, которые уходят с каждой продажи: агрегатор, эквайринг, доставка, НДС, УСН «доходы».
+function rates(pt) {
+  const n = v => Math.max(0, +v || 0) / 100;
+  const chShare = Math.min(1, pt.channels.reduce((a, c) => a + n(c.share), 0));
+  const ch = pt.channels.reduce((a, c) => a + n(c.share) * n(c.fee), 0);
+  const own = 1 - chShare;                                   // заказы через свой сайт, телефон, зал
+  const acq = own * n(pt.pay.share) * n(pt.pay.fee);         // агрегатор платит сам, эквайринг только на свои заказы
+  const del = +pt.delivery.check > 0 ? own * n(pt.delivery.share) * (+pt.delivery.cost || 0) / +pt.delivery.check : 0;
+  const v = +pt.tax.vat || 0, vat = v ? v / (100 + v) : 0;   // НДС сидит внутри цены
+  const usn = pt.tax.mode === 'usn6' ? n(pt.tax.rate) * (1 - vat) : 0;
+  return { ch, own, acq, del, vat, usn, total: ch + acq + del + vat + usn };
+}
 function roundPrice(p) {
   if (!isFinite(p) || p <= 0) return 0;
   if (db.round === '90') return Math.ceil((p + 10) / 100) * 100 - 10;
   if (db.round === '50') return Math.ceil(p / 50) * 50;
   return Math.ceil(p / 10) * 10;
 }
-// сколько продукта уходит на порцию до обработки (с отходом), в г / мл / шт
+function stats(d, pt = P()) {
+  const c = cost(d), price = +d.price || 0, miss = [...missingIn(d)], r = rates(pt);
+  return {
+    c, price, miss, empty: !hasRecipe(d), blank: !hasRecipe(d) || miss.length > 0,
+    fc: price ? c / price * 100 : NaN,
+    margin: price - c,                                   // цена минус продукты и упаковка
+    eff: price * (1 - r.total) - c,                      // остаётся после комиссий, доставки и налогов с выручки
+    rec: roundPrice(c / (db.target / 100)),              // цена под цель по фудкосту
+    min: r.total < 1 ? Math.ceil(c / (1 - r.total)) : NaN // ниже этой цены каждая продажа в минус
+  };
+}
+// расход продуктов на порцию до обработки (брутто), в г / мл / шт
 function usage(d, mult = 1, out = new Map(), seen = new Set()) {
   if (seen.has(d.id)) return out;
   const s2 = new Set(seen); s2.add(d.id);
-  for (const p of d.parts) {
-    const i = ingById(p.ing); if (!i) continue;
-    const w = Math.min(95, Math.max(0, +i.waste || 0));
-    out.set(i.id, (out.get(i.id) || 0) + (+p.qty || 0) / (1 - w / 100) * mult);
-  }
-  for (const x of d.sub || []) { const sd = dishById(x.dish); if (sd) usage(sd, mult * (+x.n || 0), out, s2); }
+  for (const p of d.parts) { const i = ingById(p.ing); if (i) out.set(i.id, (out.get(i.id) || 0) + (+p.qty || 0) / wasteK(i) * mult); }
+  for (const x of d.sub) { const sd = dishById(x.dish); if (sd) usage(sd, mult * (+x.n || 0), out, s2); }
   return out;
 }
-// расход продуктов на все продажи периода, в г / мл / шт
-function salesUsage(scale = 1) {
+const qtyOf = (d, pt = P()) => +pt.sales.qty[d.id] || 0;
+function salesUsage(pt, scale = 1) {
   const out = new Map();
-  for (const d of db.dishes) { const q = +db.sales.qty[d.id] || 0; if (q) usage(d, q * scale, out); }
+  for (const d of db.dishes) { const q = qtyOf(d, pt); if (q) usage(d, q * scale, out); }
   return out;
 }
-const packOf = i => +i.qty > 0 ? +i.price / +i.qty : 0; // цена за кг / л / шт в накладной
-const toUnit = (v, i) => v / UNITS[i.unit].k;           // из граммов в килограммы и т.п.
-// какие блюда зависят от продукта (в том числе через сеты)
-function usesIng(d, id, seen = new Set()) {
-  if (seen.has(d.id)) return false; seen.add(d.id);
-  return d.parts.some(p => p.ing === id) || (d.sub || []).some(x => { const sd = dishById(x.dish); return sd && usesIng(sd, id, seen); });
-}
-function usesDish(d, id) { return (d.sub || []).some(x => x.dish === id); }
 
-/* ---------- формат ---------- */
+// Деньги точки за период продаж
+function econ(pt) {
+  const D = +pt.sales.days || 30, r = rates(pt);
+  let qty = 0, rev = 0, food = 0, effSum = 0; const skipped = [];
+  for (const d of db.dishes) {
+    const q = qtyOf(d, pt); if (!q) continue;
+    const s = stats(d, pt);
+    if (s.blank || !s.price || !isFinite(s.c)) { skipped.push(d); continue; }
+    qty += q; rev += q * s.price; food += q * s.c; effSum += q * s.eff;
+  }
+  const agg = rev * r.ch, acq = rev * r.acq, del = rev * r.del, vat = rev * r.vat;
+  const fixed = pt.fixed.reduce((a, f) => a + (+f.sum || 0), 0) * D / 30;
+  const inc = rev - vat;                                // доход для УСН: без НДС
+  const t = pt.tax, rate = Math.max(0, +t.rate || 0) / 100;
+  let tax = 0, taxNote = '', red = 0;
+  if (t.mode === 'usn6') {
+    const full = inc * rate; red = Math.min(full, (+t.reduce || 0) * D / 30);
+    tax = full - red; taxNote = red ? `${pct(rate * 100)} с дохода минус ${rub(red)} взносов` : `${pct(rate * 100)} с дохода`;
+  } else if (t.mode === 'usn15') {
+    const base = inc - food - agg - acq - del - fixed, byBase = Math.max(0, base) * rate, minimal = inc * 0.01;
+    tax = Math.max(byBase, minimal); taxNote = byBase >= minimal ? `${pct(rate * 100)} с разницы доходов и расходов` : 'минимальный налог 1% с дохода';
+  } else if (t.mode === 'fixed') { tax = (+t.fixed || 0) * D / 30; taxNote = 'фиксированная сумма'; }
+  const gross = rev - food - agg - acq - del - vat;
+  const net = gross - fixed - tax;
+  const avgEff = qty ? effSum / qty : 0;
+  // точка безубыточности: постоянные расходы и та часть налога, что не зависит от продаж
+  const fixedPart = fixed + (t.mode === 'fixed' ? tax : 0) - red;
+  const be = avgEff > 0 ? Math.ceil(Math.max(0, fixedPart) / avgEff) : NaN;
+  return { D, r, qty, rev, food, agg, acq, del, vat, fixed, tax, taxNote, gross, net, avgEff, be, skipped, annual: rev * 365 / D };
+}
+
+/* =========================================================================
+   Формат и мелочи
+   ========================================================================= */
 const esc = s => String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const rub = (n, d = 0) => isFinite(n) ? n.toLocaleString('ru-RU', { minimumFractionDigits: d, maximumFractionDigits: d }) + ' ₽' : '—';
-const pct = n => isFinite(n) ? Math.round(n) + '%' : '—';
+const mln = n => (n / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' млн ₽';
+const pct = n => isFinite(n) ? (Math.round(n * 10) / 10).toLocaleString('ru-RU') + '%' : '—';
 const num = n => isFinite(n) ? String(Math.round(n * 100) / 100).replace('.', ',') : '';
 const parseNum = s => +String(s).replace(',', '.').replace(/\s/g, '') || 0;
-
-/* ---------- уведомление сверху ---------- */
+const plural = (n, a, b, c) => { n = Math.abs(Math.round(n)); const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 10 || h >= 20) ? b : c; };
+const days = n => `${n} ${plural(n, 'день', 'дня', 'дней')}`;
+const key = s => String(s).toLowerCase().replace(/ё/g, 'е').replace(/[«»"']/g, '').replace(/\s+/g, ' ').trim();
+const fmtQ = (v, i) => {
+  if (!isFinite(v)) return '—';
+  const f = i.unit === 'шт' ? 10 : 100;
+  return (Math.round(v * f) / f).toLocaleString('ru-RU') + ' ' + i.unit;
+};
+const noSales = () => `<div class="card"><p>В точке «${esc(P().name)}» пока нет продаж. Внесите, сколько чего продали за период, во вкладке <a href="#sales">«Продажи»</a>: отсюда считаются анализ, сверка и закупка.</p></div>`;
+function copyText(text, btn) {
+  const done = () => { const t = btn.textContent; btn.textContent = 'Скопировано'; setTimeout(() => btn.textContent = t, 1500); };
+  const manual = () => note('Скопируйте вручную:<br><textarea readonly rows="6" style="width:100%;margin-top:8px" onfocus="this.select()">' + esc(text) + '</textarea>');
+  if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, manual); else manual();
+}
 function note(html, acts = []) {
   const n = $('#notice');
-  n.innerHTML = `<div>${html}</div>` + (acts.length ? `<div class="acts">${acts.map((a, i) => `<button data-i="${i}" class="${i ? '' : 'main'}">${esc(a[0])}</button>`).join('')}</div>` : `<div class="acts"><button data-i="x" class="link">закрыть</button></div>`);
+  n.innerHTML = `<div class="notice-in"><div>${html}</div><div class="acts">${acts.length
+    ? acts.map((a, i) => `<button data-i="${i}" class="${i ? 'ghost' : 'main'}">${esc(a[0])}</button>`).join('')
+    : '<button data-i="x" class="ghost">Закрыть</button>'}</div></div>`;
   n.hidden = false;
   n.onclick = e => {
     const b = e.target.closest('button'); if (!b) return;
@@ -153,72 +263,79 @@ function note(html, acts = []) {
     n.hidden = true;
   };
 }
+const keepScroll = fn => { const y = scrollY; fn(); scrollTo(0, y); };
+const refocus = sel => { const i = $(sel); if (i) { i.focus(); const l = i.value.length; try { i.setSelectionRange(l, l); } catch (e) {} } };
 
-/* ---------- Меню ---------- */
-let menuState = { q: '', cat: '', sort: 'cat' };
+/* =========================================================================
+   Меню
+   ========================================================================= */
+let menuState = { q: '', show: 'all', sort: 'name' };
 function renderMenu() {
-  const cats = [...new Set(db.dishes.map(d => d.category || 'Без категории'))];
-  const all = db.dishes.map(d => ({ d, s: stats(d) }));
+  const pt = P();
+  const all = db.dishes.map(d => ({ d, s: stats(d, pt) }));
   const over = all.filter(x => !x.s.blank && x.s.fc > db.target).length;
+  const loss = all.filter(x => !x.s.blank && x.s.price && x.s.eff < 0).length;
   const empty = all.filter(x => x.s.empty).length;
-  const partial = all.filter(x => !x.s.empty && x.s.miss.length).length;
-  const q = menuState.q.toLowerCase();
-  let list = all.filter(x => (!q || x.d.name.toLowerCase().includes(q)) && (!menuState.cat || (x.d.category || 'Без категории') === menuState.cat));
+  const q = key(menuState.q);
+  const show = {
+    all: () => true, sets: x => isSet(x.d), single: x => !isSet(x.d),
+    empty: x => x.s.blank, over: x => !x.s.blank && x.s.fc > db.target, loss: x => !x.s.blank && x.s.price && x.s.eff < 0
+  }[menuState.show];
+  const list = all.filter(x => (!q || key(x.d.name).includes(q)) && show(x));
   const sorts = {
-    cat: (a, b) => cats.indexOf(a.d.category || 'Без категории') - cats.indexOf(b.d.category || 'Без категории') || a.d.name.localeCompare(b.d.name, 'ru'),
+    name: (a, b) => a.d.name.localeCompare(b.d.name, 'ru'),
     fc: (a, b) => (b.s.blank ? -1 : b.s.fc || 0) - (a.s.blank ? -1 : a.s.fc || 0),
-    margin: (a, b) => (a.s.blank ? 1e9 : a.s.margin) - (b.s.blank ? 1e9 : b.s.margin),
-    name: (a, b) => a.d.name.localeCompare(b.d.name, 'ru')
+    eff: (a, b) => (a.s.blank ? 1e9 : a.s.eff) - (b.s.blank ? 1e9 : b.s.eff)
   };
   list.sort(sorts[menuState.sort]);
 
-  let rows = '', lastCat = null;
-  for (const { d, s } of list) {
-    const cat = d.category || 'Без категории';
-    if (menuState.sort === 'cat' && cat !== lastCat) { rows += `<tr class="cat"><td colspan="5">${esc(cat)}</td></tr>`; lastCat = cat; }
-    const isOver = !s.blank && s.fc > db.target;
-    rows += `<tr class="row${isOver ? ' over' : ''}" data-id="${d.id}">
-      <td>${esc(d.name)}${d.sub && d.sub.length ? ` <span class="muted">(сет из ${d.sub.reduce((a, x) => a + (+x.n || 0), 0)})</span>` : ''}</td>
+  const rows = list.map(({ d, s }) => `<tr class="row${!s.blank && s.fc > db.target ? ' over' : ''}" data-id="${d.id}">
+      <td>${esc(d.name)}${isSet(d) ? ` <span class="tag">набор из ${d.sub.reduce((a, x) => a + (+x.n || 0), 0)}</span>` : ''}${d.setOnly ? ' <span class="tag">только в наборах</span>' : ''}</td>
       <td class="r">${s.price ? rub(s.price) : '<span class="muted">нет цены</span>'}</td>
       <td class="r">${s.empty ? '<span class="muted">нет состава</span>' : s.miss.length ? `<span class="muted">нет состава у ${s.miss.length}</span>` : rub(s.c)}</td>
-      <td class="r fc">${s.blank ? '' : pct(s.fc)}</td>
-      <td class="r hide-m">${s.blank || !s.price ? '' : rub(s.margin)}</td></tr>`;
-  }
+      <td class="r fc">${s.blank || !s.price ? '' : pct(Math.round(s.fc))}</td>
+      <td class="r hide-m ${!s.blank && s.price && s.eff < 0 ? 'bad' : ''}">${s.blank || !s.price ? '' : rub(s.eff)}</td></tr>`).join('');
 
   view.innerHTML = `
-    <h1>Меню</h1>
-    <p class="muted">${db.dishes.length} позиций. ${over ? `<b class="bad">${over}</b> дороже цели ${db.target}% по фудкосту` : `Все посчитанные блюда укладываются в ${db.target}%`}${empty ? `, у ${empty} не заполнен состав` : ''}${partial ? `, ${partial} ${plural(partial, 'набор посчитан', 'набора посчитаны', 'наборов посчитаны')} не полностью` : ''}.
-    ${db.demo ? ' Сейчас открыт пример с условными ценами: замените на свои или загрузите меню сайта.' : ''}</p>
-    <div class="bar">
-      <input type="search" id="q" placeholder="Найти блюдо" value="${esc(menuState.q)}">
-      <select id="cat"><option value="">Все категории</option>${cats.map(c => `<option${c === menuState.cat ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
-      <select id="sort">
-        <option value="cat">по категориям</option><option value="fc">сначала дорогие по фудкосту</option>
-        <option value="margin">сначала с маленькой маржой</option><option value="name">по алфавиту</option>
-      </select>
-      <span class="grow"></span>
-      <button class="main" id="add">Добавить блюдо</button>
-    </div>
-    <div class="tw"><table>
-      <thead><tr><th>Блюдо</th><th class="r">Цена</th><th class="r"><span class="hide-m">Себестоимость</span><span class="show-m">Себест.</span></th><th class="r">Фудкост</th><th class="r hide-m">Маржа</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="5" class="muted">Ничего не нашлось.</td></tr>'}</tbody>
-    </table></div>`;
-  $('#sort').value = menuState.sort;
-  $('#q').oninput = e => { menuState.q = e.target.value; renderMenu(); const i = $('#q'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); };
-  $('#cat').onchange = e => { menuState.cat = e.target.value; renderMenu(); };
+    <div class="head"><h1>Меню</h1><button class="main" id="add">Добавить блюдо</button></div>
+    <p class="lead">${db.dishes.length} ${plural(db.dishes.length, 'позиция', 'позиции', 'позиций')}.
+      ${over ? `<b class="bad">${over}</b> дороже цели ${db.target}% по фудкосту.` : `Все посчитанные блюда укладываются в ${db.target}%.`}
+      ${loss ? `<b class="bad">${loss}</b> продаются в убыток после комиссий и налогов.` : ''}
+      ${empty ? `У ${empty} не заполнен состав.` : ''}
+      ${db.demo ? '<br>Сейчас открыт пример с условными ценами. Замените на свои или загрузите меню сайта в «Настройках».' : ''}</p>
+    <div class="card">
+      <div class="bar">
+        <input type="search" id="q" placeholder="Найти блюдо" value="${esc(menuState.q)}">
+        <select id="show">
+          <option value="all">Все блюда</option><option value="single">Без наборов</option><option value="sets">Только наборы</option>
+          <option value="over">Дороже цели</option><option value="loss">В убыток</option><option value="empty">Без состава</option>
+        </select>
+        <select id="sort"><option value="name">По алфавиту</option><option value="fc">Сначала высокий фудкост</option><option value="eff">Сначала мало остаётся</option></select>
+      </div>
+      <div class="tw"><table>
+        <thead><tr><th>Блюдо</th><th class="r">Цена</th><th class="r"><span class="hide-m">Себестоимость</span><span class="show-m">Себест.</span></th><th class="r">Фудкост</th><th class="r hide-m">Остаётся</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5" class="muted">Ничего не нашлось.</td></tr>'}</tbody>
+      </table></div>
+      <p class="small muted">«Остаётся» — сколько рублей с порции остаётся после продуктов, упаковки, комиссий, эквайринга, доставки и налогов с выручки точки «${esc(pt.name)}». Из этого платятся аренда и зарплаты.</p>
+    </div>`;
+  $('#show').value = menuState.show; $('#sort').value = menuState.sort;
+  $('#q').oninput = e => { menuState.q = e.target.value; renderMenu(); refocus('#q'); };
+  $('#show').onchange = e => { menuState.show = e.target.value; renderMenu(); };
   $('#sort').onchange = e => { menuState.sort = e.target.value; renderMenu(); };
   $('#add').onclick = () => {
-    const d = { id: uid(), name: 'Новое блюдо', category: menuState.cat || '', price: 0, pack: 20, parts: [], sub: [] };
+    const d = { id: uid(), name: 'Новое блюдо', price: 0, pack: 20, yield: 0, parts: [], sub: [] };
     db.dishes.push(d); save(); location.hash = '#dish/' + d.id;
   };
   view.querySelector('tbody').onclick = e => { const tr = e.target.closest('tr.row'); if (tr) location.hash = '#dish/' + tr.dataset.id; };
 }
 
-/* ---------- Блюдо ---------- */
+/* =========================================================================
+   Блюдо (техкарта)
+   ========================================================================= */
 function renderDish(id) {
   const d = dishById(id);
   if (!d) { location.hash = '#menu'; return; }
-  const cats = [...new Set(db.dishes.map(x => x.category).filter(Boolean))];
+  const pt = P();
   const ingOpts = sel => db.ing.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru'))
     .map(i => `<option value="${i.id}"${i.id === sel ? ' selected' : ''}>${esc(i.name)}</option>`).join('');
   const dishOpts = sel => db.dishes.filter(x => x.id !== d.id).sort((a, b) => a.name.localeCompare(b.name, 'ru'))
@@ -226,94 +343,107 @@ function renderDish(id) {
   const usedIn = db.dishes.filter(x => usesDish(x, d.id));
 
   view.innerHTML = `
-    <a class="back" href="#menu">К меню</a>
-    <p class="print-only muted">Технологическая карта, ${new Date().toLocaleDateString('ru-RU')}</p>
-    <div class="dish-head">
-      <label>Название <input id="dn" value="${esc(d.name)}"></label>
-      <label>Категория <input id="dc" list="cats" value="${esc(d.category)}"><datalist id="cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
-      <label>Цена, ₽ <input id="dp" type="number" min="0" step="10" value="${+d.price || ''}"></label>
-      <label>Упаковка, ₽ <input id="dk" type="number" min="0" step="1" value="${+d.pack || 0}"></label>
+    <a class="back no-print" href="#menu">К меню</a>
+    <div class="print-only ttk-head">
+      <p><b>Технологическая карта</b>${db.org ? ` · ${esc(db.org)}` : ''}</p>
+      <p>Дата: ${new Date().toLocaleDateString('ru-RU')}</p>
+    </div>
+    <div class="card">
+      <div class="dish-head">
+        <label class="wide">Название <input id="dn" value="${esc(d.name)}"></label>
+        <label>Цена, ₽ <input id="dp" type="number" min="0" step="10" value="${+d.price || ''}"></label>
+        <label>Упаковка, ₽ <input id="dk" type="number" min="0" step="1" value="${+d.pack || 0}"></label>
+        <label>Выход, г <input id="dy" type="number" min="0" step="5" value="${+d.yield || ''}" placeholder="вес готового"></label>
+      </div>
+      <label class="check no-print"><input type="checkbox" id="dso"${d.setOnly ? ' checked' : ''}> продаётся только в составе наборов</label>
+      <dl class="sum" id="sum"></dl>
+      <p class="advice" id="advice"></p>
+      <p class="muted small" id="sold"></p>
     </div>
 
-    <dl class="sum" id="sum"></dl>
-    <p class="advice" id="advice"></p>
-    <p class="muted" id="sold"></p>
-
-    <h2 class="${d.parts.length ? '' : 'no-print'}">Состав</h2>
-    <div class="tw ${d.parts.length ? '' : 'no-print'}"><table class="edit">
-      <thead><tr><th>Продукт</th><th class="r">Количество</th><th class="r">Цена единицы</th><th class="r">Стоимость</th><th class="no-print"></th></tr></thead>
-      <tbody id="parts">${d.parts.map((p, k) => `<tr data-k="${k}">
-        <td><select data-f="ing">${ingOpts(p.ing)}</select></td>
-        <td class="r"><input class="n" data-f="qty" inputmode="decimal" value="${num(p.qty)}"><span class="unit" data-u></span></td>
-        <td class="r muted" data-up></td><td class="r" data-c></td>
-        <td class="no-print"><button class="del" data-del="part" title="Убрать">убрать</button></td></tr>`).join('')}
-      </tbody>
-    </table></div>
-    <div class="bar no-print">
-      ${db.ing.length ? '<button id="addPart">Добавить продукт</button>' : '<span class="muted">Сначала заведите продукты во вкладке «Продукты».</span>'}
-      ${db.dishes.length > 1 ? '<button id="addSub">Добавить блюдо в набор</button>' : ''}
+    <div class="card">
+      <h2>Состав</h2>
+      <p class="muted small no-print">Нетто — сколько продукта идёт в блюдо после чистки и разделки. Брутто считается по проценту отхода из «Продуктов».</p>
+      <div class="tw"><table class="edit">
+        <thead><tr><th>Продукт</th><th class="r">Брутто</th><th class="r">Нетто</th><th class="r hide-m">Цена</th><th class="r">Стоимость</th><th class="no-print"></th></tr></thead>
+        <tbody id="parts">${d.parts.map((p, k) => `<tr data-k="${k}">
+          <td><select data-f="ing">${ingOpts(p.ing)}</select></td>
+          <td class="r muted" data-br></td>
+          <td class="r"><input class="n" data-f="qty" inputmode="decimal" value="${num(p.qty)}"><span class="unit" data-u></span></td>
+          <td class="r muted hide-m" data-up></td><td class="r" data-c></td>
+          <td class="no-print"><button class="del" data-del>убрать</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">Продуктов пока нет.</td></tr>'}
+        </tbody>
+      </table></div>
+      <div class="bar no-print">
+        ${db.ing.length ? '<button class="ghost" id="addPart">Добавить продукт</button>' : '<span class="muted">Сначала заведите продукты во вкладке «Продукты».</span>'}
+        ${db.dishes.length > 1 ? '<button class="ghost" id="addSub">Добавить блюдо в набор</button>' : ''}
+      </div>
     </div>
 
-    ${(d.sub || []).length ? `<h2>Входит в набор</h2>
+    ${d.sub.length ? `<div class="card"><h2>Блюда в наборе</h2>
     <div class="tw"><table class="edit">
-      <thead><tr><th>Блюдо</th><th class="r">Сколько</th><th class="r">Себестоимость без упаковки</th><th class="r">Стоимость</th><th class="no-print"></th></tr></thead>
+      <thead><tr><th>Блюдо</th><th class="r">Сколько</th><th class="r">Себестоимость</th><th class="r">Стоимость</th><th class="no-print"></th></tr></thead>
       <tbody id="subs">${d.sub.map((x, k) => `<tr data-k="${k}">
         <td><select data-f="dish">${dishOpts(x.dish)}</select></td>
         <td class="r"><input class="n" data-f="n" inputmode="decimal" value="${num(x.n)}"></td>
         <td class="r muted" data-up></td><td class="r" data-c></td>
-        <td class="no-print"><button class="del" data-del="sub">убрать</button></td></tr>`).join('')}
+        <td class="no-print"><button class="del" data-del>убрать</button></td></tr>`).join('')}
       </tbody>
-    </table></div>` : ''}
+    </table></div><p class="muted small">Упаковка блюд внутри набора не считается: у набора своя.</p></div>` : ''}
 
-    ${usedIn.length ? `<p class="muted" style="margin-top:18px">Это блюдо входит в: ${usedIn.map(x => `<a href="#dish/${x.id}">${esc(x.name)}</a>`).join(', ')}.</p>` : ''}
+    ${usedIn.length ? `<p class="muted no-print">Это блюдо входит в: ${usedIn.map(x => `<a href="#dish/${x.id}">${esc(x.name)}</a>`).join(', ')}.</p>` : ''}
 
-    <div class="bar no-print" style="margin-top:28px">
-      <button id="print">Распечатать техкарту</button>
-      <button id="dup">Сделать копию</button>
+    <div class="bar no-print">
+      <button class="ghost" id="print">Распечатать техкарту</button>
+      <button class="ghost" id="dup">Сделать копию</button>
       <span class="grow"></span>
       <button class="link" id="delDish">удалить блюдо</button>
     </div>`;
 
   function refresh() {
-    const s = stats(d);
-    view.querySelectorAll('#parts tr').forEach(tr => {
+    const s = stats(d, pt);
+    view.querySelectorAll('#parts tr[data-k]').forEach(tr => {
       const p = d.parts[+tr.dataset.k], i = ingById(p.ing);
-      const per = i ? UNITS[i.unit].per : '';
+      if (!i) return;
+      const per = UNITS[i.unit].per;
       tr.querySelector('[data-u]').textContent = per;
-      tr.querySelector('[data-up]').textContent = i ? rub(unitPrice(i) * (per === 'шт' ? 1 : 1000), 0) + (per === 'шт' ? '/шт' : per === 'г' ? '/кг' : '/л') : '';
-      tr.querySelector('[data-c]').textContent = i ? rub(unitPrice(i) * (+p.qty || 0), 2) : '';
+      tr.querySelector('[data-br]').textContent = num((+p.qty || 0) / wasteK(i)) + ' ' + per;
+      tr.querySelector('[data-up]').textContent = rub(packOf(i)) + '/' + i.unit;
+      tr.querySelector('[data-c]').textContent = rub(unitPrice(i) * (+p.qty || 0), 2);
     });
     view.querySelectorAll('#subs tr').forEach(tr => {
-      const x = d.sub[+tr.dataset.k], sd = dishById(x.dish);
-      const c = sd ? cost(sd, false) : NaN;
+      const x = d.sub[+tr.dataset.k], sd = dishById(x.dish), c = sd ? cost(sd, false) : NaN;
       tr.querySelector('[data-up]').textContent = rub(c, 2);
       tr.querySelector('[data-c]').textContent = rub(c * (+x.n || 0), 2);
     });
-    const loop = !isFinite(s.c);
+    const loop = !isFinite(s.c), ok = s.price && !s.blank && !loop;
     $('#sum').innerHTML = `
-      <dt>Себестоимость</dt><dt>Фудкост</dt><dt>Маржа</dt><dt>${db.channel.share ? 'Через агрегатор' : 'Наценка'}</dt>
-      <dd>${loop ? '—' : rub(s.c, 2)}</dd>
-      <dd class="${s.fc > db.target && !s.blank ? 'bad' : ''}">${s.price && !s.blank ? pct(s.fc) : '—'}</dd>
-      <dd>${s.price && !s.blank ? rub(s.margin) : '—'}</dd>
-      <dd>${!s.price || !s.c || s.blank ? '—' : db.channel.share ? `<span class="${s.agg < 0 ? 'bad' : ''}">${rub(s.agg)}</span>` : pct((s.price - s.c) / s.c * 100)}</dd>`;
-    const q = qtyOf(d);
-    $('#sold').innerHTML = q && !s.blank && s.price ? `За ${db.sales.days} дн. продано ${q} шт, это ${rub(q * s.eff)} маржи${db.channel.share ? ' с учётом комиссии' : ''}.` : '';
+      <div><dt>Себестоимость</dt><dd>${loop ? '—' : rub(s.c, 2)}</dd></div>
+      <div><dt>Фудкост</dt><dd class="${ok && s.fc > db.target ? 'bad' : ''}">${ok ? pct(Math.round(s.fc)) : '—'}</dd></div>
+      <div><dt>Наценка</dt><dd>${ok && s.c ? pct(Math.round((s.price - s.c) / s.c * 100)) : '—'}</dd></div>
+      <div><dt>Остаётся с порции</dt><dd class="${ok && s.eff < 0 ? 'bad' : 'accent'}">${ok ? rub(s.eff) : '—'}</dd></div>`;
     const adv = $('#advice');
     if (loop) adv.innerHTML = '<span class="bad">Набор ссылается сам на себя. Уберите лишнее блюдо из набора.</span>';
     else if (s.empty) adv.innerHTML = '<span class="muted">Добавьте продукты, и здесь появится себестоимость.</span>';
     else if (s.miss.length) adv.innerHTML = `<span class="bad">Себестоимость пока занижена:</span> не заполнен состав у ${s.miss.map(x => `<a href="#dish/${x.id}">${esc(x.name)}</a>`).join(', ')}.`;
-    else if (!s.price) adv.innerHTML = `При цели ${db.target}% цена должна быть от <b>${rub(s.rec)}</b>. <button class="link" id="setRec">поставить</button>`;
-    else if (s.fc > db.target) adv.innerHTML = `<span class="bad">Дороже цели на ${Math.round(s.fc - db.target)} п.п.</span> Чтобы уложиться в ${db.target}%, нужна цена ${rub(s.rec)} или себестоимость до ${rub(s.price * db.target / 100, 2)}. <button class="link" id="setRec">поставить ${rub(s.rec)}</button>`;
-    else adv.innerHTML = `<span class="good">Укладывается в цель.</span> <span class="muted">Минимальная цена при ${db.target}%: ${rub(s.rec)}.</span>`;
+    else {
+      const minTxt = isFinite(s.min) ? ` Дешевле ${rub(s.min)} каждая продажа в точке «${esc(pt.name)}» уходит в минус.` : '';
+      if (!s.price) adv.innerHTML = `При цели ${db.target}% цена должна быть от <b>${rub(s.rec)}</b>. <button class="link" id="setRec">поставить</button>${minTxt}`;
+      else if (s.fc > db.target) adv.innerHTML = `<span class="bad">Дороже цели на ${Math.round(s.fc - db.target)} п.п.</span> Чтобы уложиться в ${db.target}%, нужна цена ${rub(s.rec)} или себестоимость до ${rub(s.price * db.target / 100, 2)}. <button class="link" id="setRec">поставить ${rub(s.rec)}</button>${minTxt}`;
+      else adv.innerHTML = `<span class="good">Укладывается в цель.</span> Цена под цель ${db.target}%: ${rub(s.rec)}.${minTxt}`;
+    }
     const sr = $('#setRec'); if (sr) sr.onclick = () => { d.price = s.rec; $('#dp').value = s.rec; save(); refresh(); };
+    const q = qtyOf(d, pt);
+    $('#sold').innerHTML = q && ok ? `В точке «${esc(pt.name)}» за ${days(pt.sales.days)} продано ${q} шт, осталось ${rub(q * s.eff)}.` : '';
   }
   refresh();
 
   const bind = (sel, f) => { $(sel).oninput = e => { f(e.target.value); save(); refresh(); }; };
   bind('#dn', v => d.name = v.trim() || 'Без названия');
-  bind('#dc', v => d.category = v.trim());
   bind('#dp', v => d.price = parseNum(v));
   bind('#dk', v => d.pack = parseNum(v));
+  bind('#dy', v => d.yield = parseNum(v));
+  $('#dso').onchange = e => { d.setOnly = e.target.checked; save(); };
 
   const onRow = (tbodySel, arr) => {
     const tb = $(tbodySel); if (!tb) return;
@@ -323,10 +453,7 @@ function renderDish(id) {
       item[f] = (f === 'ing' || f === 'dish') ? e.target.value : parseNum(e.target.value);
       save(); refresh();
     };
-    tb.onclick = e => {
-      const b = e.target.closest('[data-del]'); if (!b) return;
-      arr().splice(+b.closest('tr').dataset.k, 1); save(); renderDish(id);
-    };
+    tb.onclick = e => { const b = e.target.closest('[data-del]'); if (!b) return; arr().splice(+b.closest('tr').dataset.k, 1); save(); keepScroll(() => renderDish(id)); };
   };
   onRow('#parts', () => d.parts);
   onRow('#subs', () => d.sub);
@@ -335,14 +462,13 @@ function renderDish(id) {
   if (ap) ap.onclick = () => {
     const used = new Set(d.parts.map(p => p.ing));
     const next = db.ing.find(i => !used.has(i.id)) || db.ing[0];
-    d.parts.push({ ing: next.id, qty: next.unit === 'шт' ? 1 : 10 }); save(); renderDish(id);
-    const rows = view.querySelectorAll('#parts select'); rows[rows.length - 1].focus();
+    d.parts.push({ ing: next.id, qty: next.unit === 'шт' ? 1 : 10 }); save(); keepScroll(() => renderDish(id));
+    const sels = view.querySelectorAll('#parts select'); sels[sels.length - 1].focus();
   };
   const as = $('#addSub');
   if (as) as.onclick = () => {
-    d.sub = d.sub || [];
     const other = db.dishes.find(x => x.id !== d.id && !d.sub.some(s => s.dish === x.id)) || db.dishes.find(x => x.id !== d.id);
-    d.sub.push({ dish: other.id, n: 1 }); save(); renderDish(id);
+    d.sub.push({ dish: other.id, n: 1 }); save(); keepScroll(() => renderDish(id));
   };
   $('#print').onclick = () => print();
   $('#dup').onclick = () => {
@@ -351,86 +477,87 @@ function renderDish(id) {
   };
   $('#delDish').onclick = () => {
     if (usedIn.length) { note(`Нельзя удалить: «${esc(d.name)}» входит в ${usedIn.map(x => '«' + esc(x.name) + '»').join(', ')}. Сначала уберите его оттуда.`); return; }
-    const snapshot = JSON.stringify(db);
-    db.dishes = db.dishes.filter(x => x.id !== d.id); save(); location.hash = '#menu';
-    note(`Блюдо «${esc(d.name)}» удалено.`, [['Вернуть', () => { db = JSON.parse(snapshot); save(); route(); }], ['Ок', () => {}]]);
+    const snap = JSON.stringify(db);
+    db.dishes = db.dishes.filter(x => x.id !== d.id);
+    for (const p of db.points) delete p.sales.qty[d.id];
+    save(); location.hash = '#menu';
+    note(`Блюдо «${esc(d.name)}» удалено.`, [['Вернуть', () => { db = JSON.parse(snap); save(); route(); }], ['Ок', () => {}]]);
   };
 }
 
-/* ---------- Продукты ---------- */
-function renderProducts() {
-  const sorted = db.ing.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-  view.innerHTML = `
-    <h1>Продукты</h1>
-    <p class="muted">Пишите цену так, как она стоит в накладной: за упаковку. Отход — сколько процентов уходит при разделке и чистке: у лосося обычно 15–20%, у авокадо около 30%.</p>
-    <div class="tw"><table class="edit">
-      <thead><tr><th>Продукт</th><th class="r">Упаковка</th><th></th><th class="r">Цена упаковки, ₽</th><th class="r">Отход, %</th><th class="r">Чистая цена</th><th class="r hide-m">За полгода</th><th class="r hide-m">В блюдах</th><th></th></tr></thead>
-      <tbody id="ings">${sorted.map(i => {
-        const n = db.dishes.filter(d => usesIng(d, i.id)).length;
-        return `<tr data-id="${i.id}">
-          <td><input data-f="name" value="${esc(i.name)}"></td>
-          <td class="r"><input class="n" data-f="qty" inputmode="decimal" value="${num(i.qty)}"></td>
-          <td><select data-f="unit">${Object.keys(UNITS).map(u => `<option${u === i.unit ? ' selected' : ''}>${u}</option>`).join('')}</select></td>
-          <td class="r"><input class="n" data-f="price" inputmode="decimal" value="${num(i.price)}"></td>
-          <td class="r"><input class="n" data-f="waste" inputmode="decimal" value="${num(i.waste || 0)}" style="width:64px"></td>
-          <td class="r" data-net></td>
-          <td class="r hide-m" data-hist>${histCell(i)}</td>
-          <td class="r muted hide-m">${n || ''}</td>
-          <td><button class="del" data-del>убрать</button></td></tr>`;
-      }).join('')}</tbody>
-    </table></div>
-    <div class="bar"><button class="main" id="addIng">Добавить продукт</button></div>`;
-
-  const net = i => i.unit === 'шт' ? rub(unitPrice(i), 2) + '/шт' : rub(unitPrice(i) * 1000) + (i.unit === 'кг' ? '/кг' : '/л');
-  view.querySelectorAll('#ings tr').forEach(tr => tr.querySelector('[data-net]').textContent = net(ingById(tr.dataset.id)));
-
-  const tb = $('#ings');
-  let before = null; // фудкост до правки цены, чтобы показать, что изменилось
-  tb.addEventListener('focusin', e => {
-    const tr = e.target.closest('tr'); if (!tr) return;
-    const id = tr.dataset.id;
-    before = { id, snap: JSON.stringify(ingById(id)), fc: Object.fromEntries(db.dishes.filter(d => usesIng(d, id)).map(d => [d.id, stats(d).fc])) };
-  });
-  tb.oninput = tb.onchange = e => {
-    const tr = e.target.closest('tr'), f = e.target.dataset.f; if (!tr || !f) return;
-    const i = ingById(tr.dataset.id);
-    i[f] = (f === 'name') ? e.target.value : f === 'unit' ? e.target.value : parseNum(e.target.value);
-    tr.querySelector('[data-net]').textContent = net(i);
-    save();
-  };
-  tb.addEventListener('focusout', e => {
-    const tr = e.target.closest('tr'); if (!tr || !before || before.id !== tr.dataset.id) return;
-    if (tr.contains(e.relatedTarget)) return; // перешли в соседнее поле той же строки
-    const i = ingById(before.id), b = before; before = null;
-    if (!i || JSON.stringify(i) === b.snap) return;
-    const old = JSON.parse(b.snap);
-    if (+old.qty > 0 && packOf(old) !== packOf(i)) { i.hist.push({ t: Date.now(), v: packOf(old) }); save(); tr.querySelector('[data-hist]').innerHTML = histCell(i); }
-    impact(i, b);
-  });
-  tb.onclick = e => {
-    const btn = e.target.closest('[data-del]'); if (!btn) return;
-    const id = btn.closest('tr').dataset.id, i = ingById(id);
-    const users = db.dishes.filter(d => d.parts.some(p => p.ing === id));
-    if (users.length) { note(`«${esc(i.name)}» есть в составе: ${users.map(d => `<a href="#dish/${d.id}">${esc(d.name)}</a>`).join(', ')}. Уберите его оттуда, потом удалите.`); return; }
-    db.ing = db.ing.filter(x => x.id !== id); save(); renderProducts();
-  };
-  $('#addIng').onclick = () => {
-    db.ing.push({ id: uid(), name: '', unit: 'кг', qty: 1, price: 0, waste: 0 }); save(); renderProducts();
-    view.querySelector(`#ings tr[data-id="${db.ing[db.ing.length - 1].id}"] input`).focus();
-  };
-}
-
-// изменение цены за полгода по истории правок
+/* =========================================================================
+   Продукты
+   ========================================================================= */
 function histCell(i) {
   const since = Date.now() - 183 * 864e5, h = (i.hist || []).filter(x => x.t >= since);
   if (!h.length || !(h[0].v > 0)) return '';
   const ch = (packOf(i) - h[0].v) / h[0].v * 100;
   if (Math.abs(ch) < .5) return '';
   const when = new Date(h[0].t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
-  return `<span class="${ch > 0 ? 'bad' : 'good'}" title="было ${rub(h[0].v)} за ${i.unit}">${ch > 0 ? '+' : ''}${pct(ch)}</span> <span class="muted">с ${when}</span>`;
+  return `<span class="${ch > 0 ? 'bad' : 'good'}" title="было ${rub(h[0].v)} за ${i.unit}">${ch > 0 ? '+' : ''}${pct(Math.round(ch))}</span> <span class="muted">с ${when}</span>`;
 }
+function renderProducts() {
+  const sorted = db.ing.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  const net = i => i.unit === 'шт' ? rub(unitPrice(i), 2) + '/шт' : rub(unitPrice(i) * 1000) + '/' + i.unit;
+  view.innerHTML = `
+    <div class="head"><h1>Продукты</h1><button class="main" id="addIng">Добавить продукт</button></div>
+    <p class="lead">Цена как в накладной: за упаковку. Общие для всех точек.</p>
+    <div class="card">
+      <div class="tw"><table class="edit">
+        <thead><tr><th>Продукт</th><th class="r">Упаковка</th><th></th><th class="r">Цена, ₽</th><th class="r">Отход, %</th><th class="r">Цена нетто</th><th class="r hide-m">За полгода</th><th class="r hide-m">Блюд</th><th></th></tr></thead>
+        <tbody id="ings">${sorted.map(i => `<tr data-id="${i.id}">
+          <td><input data-f="name" value="${esc(i.name)}" placeholder="Название"></td>
+          <td class="r"><input class="n s" data-f="qty" inputmode="decimal" value="${num(i.qty)}"></td>
+          <td><select data-f="unit">${Object.keys(UNITS).map(u => `<option${u === i.unit ? ' selected' : ''}>${u}</option>`).join('')}</select></td>
+          <td class="r"><input class="n" data-f="price" inputmode="decimal" value="${num(i.price)}"></td>
+          <td class="r"><input class="n s" data-f="waste" inputmode="decimal" value="${num(i.waste || 0)}"></td>
+          <td class="r" data-net>${net(i)}</td>
+          <td class="r hide-m" data-hist>${histCell(i)}</td>
+          <td class="r muted hide-m">${db.dishes.filter(d => usesIng(d, i.id)).length || ''}</td>
+          <td><button class="del" data-del>убрать</button></td></tr>`).join('') || '<tr><td colspan="9" class="muted">Продуктов пока нет.</td></tr>'}</tbody>
+      </table></div>
+      <p class="small muted">Отход — сколько процентов веса уходит при чистке и разделке. Он зависит от того, что вы покупаете: целая рыба и готовое филе дают очень разный отход. Точнее всего взвесить один раз: (вес до обработки − вес после) / вес до × 100.</p>
+    </div>`;
 
-// после смены цены продукта: что подорожало и что ушло за цель
+  const tb = $('#ings');
+  let before = null;
+  tb.addEventListener('focusin', e => {
+    const tr = e.target.closest('tr[data-id]'); if (!tr) return;
+    const id = tr.dataset.id;
+    if (before && before.id === id) return;
+    before = { id, snap: JSON.stringify(ingById(id)), fc: Object.fromEntries(db.dishes.filter(d => usesIng(d, id)).map(d => [d.id, stats(d).fc])) };
+  });
+  tb.oninput = tb.onchange = e => {
+    const tr = e.target.closest('tr[data-id]'), f = e.target.dataset.f; if (!tr || !f) return;
+    const i = ingById(tr.dataset.id);
+    i[f] = (f === 'name' || f === 'unit') ? e.target.value : parseNum(e.target.value);
+    tr.querySelector('[data-net]').textContent = net(i);
+    save();
+  };
+  tb.addEventListener('focusout', e => {
+    const tr = e.target.closest('tr[data-id]'); if (!tr || !before || before.id !== tr.dataset.id) return;
+    if (tr.contains(e.relatedTarget)) return;
+    const i = ingById(before.id), b = before; before = null;
+    if (!i || JSON.stringify(i) === b.snap) return;
+    const old = JSON.parse(b.snap);
+    if (+old.qty > 0 && old.unit === i.unit && packOf(old) !== packOf(i)) { i.hist.push({ t: Date.now(), v: packOf(old) }); save(); tr.querySelector('[data-hist]').innerHTML = histCell(i); }
+    impact(i, b);
+  });
+  tb.onclick = e => {
+    const btn = e.target.closest('[data-del]'); if (!btn) return;
+    const id = btn.closest('tr').dataset.id, i = ingById(id);
+    const users = db.dishes.filter(d => d.parts.some(p => p.ing === id));
+    if (users.length) { note(`«${esc(i.name)}» есть в составе: ${users.slice(0, 10).map(d => `<a href="#dish/${d.id}">${esc(d.name)}</a>`).join(', ')}${users.length > 10 ? '…' : ''}. Уберите его оттуда, потом удалите.`); return; }
+    db.ing = db.ing.filter(x => x.id !== id);
+    for (const p of db.points) delete p.stock[id];
+    save(); keepScroll(renderProducts);
+  };
+  $('#addIng').onclick = () => {
+    const i = { id: uid(), name: '', unit: 'кг', qty: 1, price: 0, waste: 0, hist: [] };
+    db.ing.push(i); save(); renderProducts();
+    view.querySelector(`#ings tr[data-id="${i.id}"] input`).focus();
+  };
+}
 function impact(i, b) {
   const rows = Object.entries(b.fc).map(([id, fc0]) => {
     const d = dishById(id), s = stats(d);
@@ -439,193 +566,57 @@ function impact(i, b) {
     .sort((a, c) => (c.fc1 - c.fc0) - (a.fc1 - a.fc0));
   if (!rows.length) return;
   const crossed = rows.filter(r => r.crossed);
-  const list = rows.slice(0, 8).map(r => `<li><a href="#dish/${r.d.id}">${esc(r.d.name)}</a>: было ${pct(r.fc0)}, стало <b class="${r.fc1 > db.target ? 'bad' : ''}">${pct(r.fc1)}</b></li>`).join('');
+  const list = rows.slice(0, 8).map(r => `<li><a href="#dish/${r.d.id}">${esc(r.d.name)}</a>: было ${pct(Math.round(r.fc0))}, стало <b class="${r.fc1 > db.target ? 'bad' : ''}">${pct(Math.round(r.fc1))}</b></li>`).join('');
   const old = JSON.parse(b.snap);
   note(`Цена «${esc(i.name)}» изменилась, это задело ${rows.length} ${plural(rows.length, 'блюдо', 'блюда', 'блюд')}${crossed.length ? `, из них <b class="bad">${crossed.length}</b> теперь дороже цели ${db.target}%` : ''}.<ul>${list}</ul>${rows.length > 8 ? `<span class="muted">и ещё ${rows.length - 8}</span>` : ''}`,
-    [['Понятно', () => {}], ['Вернуть старую цену', () => { Object.assign(ingById(i.id), old); save(); route(); }]]);
-}
-const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 10 || h >= 20) ? b : c; };
-
-/* ---------- Импорт и файлы ---------- */
-const CAT_NAMES = { sety: 'Сеты', klassicheskie_rolly: 'Классические роллы', zapechennye_rolly: 'Запечённые роллы', zharenye_rolly: 'Жареные роллы',
-  zakuski_fastfud: 'Закуски', pizza: 'Пицца', pasta: 'Паста', wok: 'Вок', salaty: 'Салаты', deserty: 'Десерты', napitki: 'Напитки' };
-const catName = c => CAT_NAMES[c] || (c ? String(c).replace(/_/g, ' ').replace(/^./, ch => ch.toUpperCase()) : '');
-const key = s => String(s).toLowerCase().replace(/ё/g, 'е').replace(/[«»"']/g, '').replace(/\s+/g, ' ').trim();
-
-// menu.json с сайта: [{name, category, price, description}]. Сеты узнаём по строкам описания, совпадающим с названиями блюд.
-function importMenu(items, opt = {}) {
-  if (!Array.isArray(items)) throw new Error('В файле нет списка блюд.');
-  let added = 0, updated = 0;
-  const byName = new Map(db.dishes.map(d => [key(d.name), d]));
-  const touched = [];
-  for (const it of items) {
-    if (!it || !it.name) continue;
-    const price = +it.price || (Array.isArray(it.sizes) && it.sizes[0] ? +it.sizes[0].price || 0 : 0);
-    let d = byName.get(key(it.name));
-    if (d) { d.price = price || d.price; if (!d.category) d.category = catName(it.category); updated++; }
-    else { d = { id: uid(), name: String(it.name).trim(), category: catName(it.category), price, pack: 20, parts: [], sub: [] }; db.dishes.push(d); byName.set(key(d.name), d); added++; }
-    touched.push([d, it]);
-  }
-  let sets = 0, found = 0; const missing = new Map();
-  for (const [d, it] of touched) {
-    if (hasRecipe(d) || !it.description) continue;
-    const lines = String(it.description).split('\n').map(s => s.trim()).filter(s => s && !/^вес\s*:/i.test(s));
-    if (lines.length < 2) continue;
-    const clean = l => key(l.replace(/\s*[x×х]\s*\d+$/i, ''));
-    const hits = lines.map(l => byName.get(clean(l))).filter(x => x && x !== d);
-    if (hits.length < 2 && !(opt.createMissing && /^сет/i.test(d.category || ''))) continue;
-    sets++;
-    for (const l of lines) {
-      let sd = byName.get(clean(l));
-      if (!sd && opt.createMissing) {
-        sd = { id: uid(), name: l.replace(/\s*[x×х]\s*\d+$/i, ''), category: 'Роллы только в сетах', price: 0, pack: 0, parts: [], sub: [] };
-        db.dishes.push(sd); byName.set(clean(l), sd); added++;
-      }
-      if (sd && sd !== d) { const ex = d.sub.find(x => x.dish === sd.id); ex ? ex.n++ : d.sub.push({ dish: sd.id, n: 1 }); found++; }
-      else missing.set(l, (missing.get(l) || 0) + 1);
-    }
-  }
-  db.demo = false;
-  save();
-  return { added, updated, sets, found, missing: [...missing.keys()] };
+    [['Понятно', () => {}], ['Вернуть старую цену', () => { const cur = ingById(i.id); const h = cur.hist; Object.assign(cur, old, { hist: h.slice(0, -1) }); save(); route(true); }]]);
 }
 
-function download(name, text) {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-  a.download = name; document.body.appendChild(a); a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
-}
-
-function renderData(report) {
-  view.innerHTML = `
-    <h1>Файлы</h1>
-    <h2>Меню с сайта</h2>
-    <p>Загрузите <code>menu.json</code> сайта доставки. Цены и категории подтянутся, а сеты, в описании которых по строкам перечислены роллы, соберутся из этих роллов сами. Состав роллов останется заполнить во вкладке блюда.</p>
-    <div class="drop" id="drop"><input type="file" id="menuFile" accept=".json,application/json"> <span class="muted">или перетащите файл сюда</span></div>
-    ${report || ''}
-
-    <h2>Передать ссылкой</h2>
-    <p class="muted">Все данные упакуются прямо в ссылку. Отправьте её себе на телефон или владельцу в WhatsApp: по ней откроется та же база. На сервер ничего не уходит.</p>
-    <div class="bar"><button class="main" id="mkLink">Сделать ссылку</button><span id="linkInfo" class="muted"></span></div>
-
-    <h2>Свои данные</h2>
-    <p class="muted">Всё хранится только в этом браузере. Чтобы перенести на другой компьютер или не потерять, сохраните файл.</p>
-    <div class="bar">
-      <button class="main" id="exp">Сохранить файл</button>
-      <label class="btn">Открыть файл <input type="file" id="impFile" accept=".json,application/json" hidden></label>
-      <span class="grow"></span>
-      <button class="link" id="reset">начать с чистого листа</button>
-      <button class="link" id="demo">вернуть пример</button>
-    </div>`;
-
-  const readFile = (file, cb) => {
-    const r = new FileReader();
-    r.onload = () => { try { cb(JSON.parse(r.result)); } catch (err) { note('Не получилось прочитать файл: ' + esc(err.message)); } };
-    r.readAsText(file);
-  };
-  const doImport = (file, opt) => readFile(file, items => run(items, opt));
-  const run = (items, opt = {}, snap = JSON.stringify(db)) => {
-    const r = importMenu(items, opt);
-    renderData(`<div class="report"><b>Готово.</b> Новых позиций: ${r.added}, обновлено цен: ${r.updated}. Сетов собрано: ${r.sets}, роллов в них узнано: ${r.found}.
-      ${r.missing.length ? `<br>В сетах есть роллы, которых нет в меню. Обычно это роллы только для сетов или опечатка в названии: <ul>${r.missing.slice(0, 15).map(m => `<li>${esc(m)}</li>`).join('')}</ul>${r.missing.length > 15 ? `<span class="muted">и ещё ${r.missing.length - 15}</span>` : ''}` : ''}
-      <div class="bar"><a class="btn" href="#menu">К меню</a>${r.missing.length ? `<button id="mkMissing">Завести их как блюда (${r.missing.length})</button>` : ''}<button class="link" id="undoImp">отменить импорт</button></div></div>`);
-    $('#undoImp').onclick = () => { db = JSON.parse(snap); save(); renderData(); };
-    const mk = $('#mkMissing');
-    if (mk) mk.onclick = () => { db = JSON.parse(snap); run(items, { createMissing: true }, snap); };
-  };
-  $('#menuFile').onchange = e => e.target.files[0] && doImport(e.target.files[0]);
-  const drop = $('#drop');
-  drop.ondragover = e => { e.preventDefault(); drop.style.borderColor = 'var(--ink)'; };
-  drop.ondragleave = () => drop.style.borderColor = '';
-  drop.ondrop = e => { e.preventDefault(); drop.style.borderColor = ''; const f = e.dataTransfer.files[0]; if (f) doImport(f); };
-
-  $('#mkLink').onclick = async e => {
-    if (!('CompressionStream' in window)) { $('#linkInfo').textContent = 'Этот браузер не умеет сжимать данные. Сохраните файл.'; return; }
-    const link = await packLink();
-    $('#linkInfo').textContent = `Длина ссылки ${link.length.toLocaleString('ru-RU')} знаков.` + (link.length > 60000 ? ' Это много, мессенджер может её обрезать, надёжнее файлом.' : '');
-    copyText(link, e.target);
-  };
-  $('#exp').onclick = () => download(`fudkost-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(db, null, 1));
-  $('#impFile').onchange = e => {
-    const f = e.target.files[0]; if (!f) return;
-    readFile(f, data => {
-      if (!data || !Array.isArray(data.ing) || !Array.isArray(data.dishes)) { note('Это не файл Фудкоста. Для меню сайта используйте загрузку выше.'); return; }
-      const snap = JSON.stringify(db);
-      db = migrate(data); save(); route();
-      note(`Открыт файл «${esc(f.name)}»: ${db.dishes.length} блюд, ${db.ing.length} продуктов.`, [['Ок', () => {}], ['Вернуть как было', () => { db = JSON.parse(snap); save(); route(); }]]);
-    });
-  };
-  const replace = (fresh, msg) => {
-    const snap = JSON.stringify(db); db = fresh; save(); location.hash = '#menu'; route();
-    note(msg, [['Ок', () => {}], ['Отменить', () => { db = JSON.parse(snap); save(); route(); }]]);
-  };
-  $('#reset').onclick = () => replace({ target: db.target, ing: [], dishes: [] }, 'Данные очищены.');
-  $('#demo').onclick = () => replace(demo(), 'Загружен пример.');
-}
-
-/* ---------- общее для новых вкладок ---------- */
-const qtyOf = d => +db.sales.qty[d.id] || 0;
-const fmtQ = (v, i) => {
-  if (!isFinite(v)) return '—';
-  const u = i.unit, x = Math.round(v * (u === 'шт' ? 10 : 100)) / (u === 'шт' ? 10 : 100);
-  return x.toLocaleString('ru-RU') + ' ' + u;
-};
-const noSales = () => `<p>Пока нет продаж. Внесите, сколько чего продали за период, во вкладке <a href="#sales">«Продажи»</a>: отсюда считаются анализ, сверка и закупка.</p>`;
-function copyText(text, btn) {
-  const done = () => { const t = btn.textContent; btn.textContent = 'Скопировано'; setTimeout(() => btn.textContent = t, 1500); };
-  if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => prompt('Скопируйте текст:', text));
-  else prompt('Скопируйте текст:', text);
-}
-
-/* ---------- Продажи ---------- */
+/* =========================================================================
+   Продажи
+   ========================================================================= */
 let salesQ = '';
 function renderSales(report) {
-  const cats = [...new Set(db.dishes.map(d => d.category || 'Без категории'))];
-  const q = salesQ.toLowerCase();
-  const list = db.dishes.filter(d => d.category !== 'Роллы только в сетах' && (!q || d.name.toLowerCase().includes(q)))
-    .sort((a, b) => cats.indexOf(a.category || 'Без категории') - cats.indexOf(b.category || 'Без категории') || a.name.localeCompare(b.name, 'ru'));
-  let total = 0, revenue = 0;
-  for (const d of db.dishes) { total += qtyOf(d); revenue += qtyOf(d) * (+d.price || 0); }
-  let rows = '', last = null;
-  for (const d of list) {
-    const c = d.category || 'Без категории';
-    if (c !== last && !q) { rows += `<tr class="cat"><td colspan="3">${esc(c)}</td></tr>`; last = c; }
-    rows += `<tr data-id="${d.id}"><td>${esc(d.name)}</td>
-      <td class="r"><input class="n" inputmode="numeric" value="${qtyOf(d) || ''}" placeholder="0"></td>
-      <td class="r muted hide-m">${qtyOf(d) && d.price ? rub(qtyOf(d) * d.price) : ''}</td></tr>`;
-  }
+  const pt = P();
+  const q = key(salesQ);
+  const list = db.dishes.filter(d => !d.setOnly && (!q || key(d.name).includes(q))).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  const totals = () => { let t = 0, r = 0; for (const d of db.dishes) { t += qtyOf(d, pt); r += qtyOf(d, pt) * (+d.price || 0); } return [t, r]; };
+  const [total, revenue] = totals();
   view.innerHTML = `
-    <h1>Продажи</h1>
-    <p class="muted">Сколько порций продано за период. По этим цифрам считается всё в «Анализе», «Сверке» и «Закупке».</p>
-    <div class="bar"><label>Период, дней <input id="days" type="number" min="1" max="366" value="${db.sales.days}" style="width:70px"></label>
-      <span class="muted">Итого: <b id="tot">${total}</b> порций на <b id="rev">${rub(revenue)}</b></span></div>
+    <div class="head"><h1>Продажи</h1></div>
+    <p class="lead">Точка «${esc(pt.name)}». Сколько порций продано за период: отсюда считаются анализ, сверка и закупка.</p>
+    <div class="card">
+      <div class="bar"><label>Период, дней <input id="days" type="number" min="1" max="366" value="${pt.sales.days}" class="s"></label>
+        <span class="muted">Итого <b id="tot">${total}</b> порций на <b id="rev">${rub(revenue)}</b></span></div>
+    </div>
+    <div class="card">
+      <h2>Вставить из кассы или Excel</h2>
+      <p class="muted small">По строке на блюдо: название и количество через табуляцию, точку с запятой или пробел. Так выгружают отчёт «Продажи по блюдам» большинство касс: скопируйте два столбца и вставьте сюда.</p>
+      <textarea id="paste" rows="5" placeholder="Филадельфия	240&#10;Калифорния; 180"></textarea>
+      <div class="bar"><button class="main" id="parse">Разобрать</button><label class="check"><input type="checkbox" id="add2"> прибавить к текущим</label></div>
+      ${report || ''}
+    </div>
+    <div class="card">
+      <div class="bar"><input type="search" id="sq" placeholder="Найти блюдо" value="${esc(salesQ)}"><span class="grow"></span><button class="link" id="clr">обнулить продажи точки</button></div>
+      <div class="tw"><table class="edit"><thead><tr><th>Блюдо</th><th class="r">Продано</th><th class="r hide-m">Выручка</th></tr></thead>
+      <tbody id="srows">${list.map(d => `<tr data-id="${d.id}"><td>${esc(d.name)}</td>
+        <td class="r"><input class="n" inputmode="numeric" value="${qtyOf(d, pt) || ''}" placeholder="0"></td>
+        <td class="r muted hide-m">${qtyOf(d, pt) && d.price ? rub(qtyOf(d, pt) * d.price) : ''}</td></tr>`).join('')}</tbody></table></div>
+    </div>`;
 
-    <h2>Вставить из кассы или Excel</h2>
-    <p class="muted">По строке на блюдо: название и количество через табуляцию, точку с запятой или пробел. Строки, где нет числа в конце, пропускаются.</p>
-    <textarea id="paste" rows="5" style="width:100%" placeholder="Филадельфия	240&#10;Калифорния; 180"></textarea>
-    <div class="bar"><button class="main" id="parse">Разобрать</button><label class="check"><input type="checkbox" id="add2"> прибавить к текущим, а не заменить</label></div>
-    ${report || ''}
-
-    <h2>По блюдам</h2>
-    <div class="bar"><input type="search" id="sq" placeholder="Найти блюдо" value="${esc(salesQ)}"><span class="grow"></span><button class="link" id="clr">обнулить все продажи</button></div>
-    <div class="tw"><table class="edit"><thead><tr><th>Блюдо</th><th class="r">Продано</th><th class="r hide-m">Выручка</th></tr></thead>
-    <tbody id="srows">${rows}</tbody></table></div>`;
-
-  $('#days').oninput = e => { const v = Math.round(parseNum(e.target.value)); if (v >= 1) { db.sales.days = v; save(); } };
-  $('#sq').oninput = e => { salesQ = e.target.value; renderSales(); const i = $('#sq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); };
+  $('#days').oninput = e => { const v = Math.round(parseNum(e.target.value)); if (v >= 1 && v <= 366) { pt.sales.days = v; save(); } };
+  $('#sq').oninput = e => { salesQ = e.target.value; renderSales(); refocus('#sq'); };
   $('#srows').oninput = e => {
     const tr = e.target.closest('tr'); if (!tr) return;
     const v = Math.max(0, Math.round(parseNum(e.target.value)));
-    if (v) db.sales.qty[tr.dataset.id] = v; else delete db.sales.qty[tr.dataset.id];
+    if (v) pt.sales.qty[tr.dataset.id] = v; else delete pt.sales.qty[tr.dataset.id];
     save();
-    let t = 0, r = 0; for (const d of db.dishes) { t += qtyOf(d); r += qtyOf(d) * (+d.price || 0); }
-    $('#tot').textContent = t; $('#rev').textContent = rub(r);
+    const [t, r] = totals(); $('#tot').textContent = t; $('#rev').textContent = rub(r);
     const d = dishById(tr.dataset.id); tr.lastElementChild.textContent = v && d.price ? rub(v * d.price) : '';
   };
   $('#clr').onclick = () => {
-    const snap = JSON.stringify(db.sales.qty); db.sales.qty = {}; save(); renderSales();
-    note('Продажи обнулены.', [['Ок', () => {}], ['Вернуть', () => { db.sales.qty = JSON.parse(snap); save(); renderSales(); }]]);
+    const snap = JSON.stringify(pt.sales.qty); pt.sales.qty = {}; save(); renderSales();
+    note(`Продажи точки «${esc(pt.name)}» обнулены.`, [['Ок', () => {}], ['Вернуть', () => { pt.sales.qty = JSON.parse(snap); save(); renderSales(); }]]);
   };
   $('#parse').onclick = () => {
     const byName = new Map(db.dishes.map(d => [key(d.name), d]));
@@ -638,107 +629,111 @@ function renderSales(report) {
       got.set(d.id, (got.get(d.id) || 0) + Math.round(parseNum(m[2])));
     }
     if (!got.size && !miss.length) { renderSales('<div class="report">Не нашёл ни одной строки вида «название количество».</div>'); return; }
-    const snap = JSON.stringify(db.sales.qty);
-    if (!add) db.sales.qty = {};
-    for (const [id, v] of got) db.sales.qty[id] = (add ? qtyOf(dishById(id)) : 0) + v;
+    const snap = JSON.stringify(pt.sales.qty);
+    if (!add) pt.sales.qty = {};
+    for (const [id, v] of got) pt.sales.qty[id] = (add ? qtyOf(dishById(id), pt) : 0) + v;
     save();
     renderSales(`<div class="report"><b>Готово.</b> Узнано блюд: ${got.size}.
       ${miss.length ? `<br>Нет в меню: <ul>${miss.slice(0, 12).map(m => `<li>${esc(m)}</li>`).join('')}</ul>${miss.length > 12 ? `<span class="muted">и ещё ${miss.length - 12}</span>` : ''}` : ''}
-      <div class="bar"><a class="btn" href="#analysis">К анализу</a><button class="link" id="undoS">отменить</button></div></div>`);
-    $('#undoS').onclick = () => { db.sales.qty = JSON.parse(snap); save(); renderSales(); };
+      <div class="bar"><a class="btn ghost" href="#analysis">К анализу</a><button class="link" id="undoS">отменить</button></div></div>`);
+    $('#undoS').onclick = () => { pt.sales.qty = JSON.parse(snap); save(); renderSales(); };
   };
 }
 
-/* ---------- Анализ ---------- */
-// Матрица меню-инжиниринга (Kasavana и Smith, 1982): популярность против маржи.
+/* =========================================================================
+   Анализ
+   ========================================================================= */
+// Матрица меню-инжиниринга (Kasavana и Smith): популярность против денег с порции.
 const QUAD = {
-  star: { name: 'Звёзды', hint: 'Продаются хорошо и приносят много. Не трогайте рецепт и цену, держите их на виду: первыми в меню, на обложке, в рассылке.' },
-  horse: { name: 'Рабочие лошадки', hint: 'Берут часто, но зарабатываете на них мало. Их легче всего улучшить: поднять цену немного, проверить вес порции, заменить дорогой продукт или продавать в наборе с выгодным блюдом.' },
-  puzzle: { name: 'Загадки', hint: 'Выгодные, но их мало берут. Переименуйте, сделайте хорошее фото, поднимите выше в меню, пусть оператор предлагает при заказе.' },
-  dog: { name: 'Собаки', hint: 'Мало берут и мало приносят. Попробуйте месяц переделать или переименовать. Не помогло — уберите: меню станет короче, закупка проще.' }
+  star: { name: 'Звёзды', hint: 'Продаются хорошо и приносят много. Не меняйте рецепт и цену, держите их на виду: первыми в меню, на баннерах, в рассылке.' },
+  horse: { name: 'Рабочие лошадки', hint: 'Берут часто, но зарабатываете на них мало. Их улучшить проще всего: немного поднять цену, проверить вес порции, заменить дорогой продукт или продавать в наборе с выгодным блюдом.' },
+  puzzle: { name: 'Загадки', hint: 'Выгодные, но их мало берут. Переименуйте, сделайте хорошее фото, поднимите выше в меню, пусть оператор предлагает их при заказе.' },
+  dog: { name: 'Собаки', hint: 'Мало берут и мало приносят. Попробуйте месяц переделать или переименовать. Если не помогло, уберите: меню станет короче, закупка проще.' }
 };
-let anaCat = '', whatIf = { ing: '', pct: 20 };
-function analysisRows(cat) {
-  return db.dishes.map(d => ({ d, s: stats(d), q: qtyOf(d) }))
-    .filter(x => x.q > 0 && !x.s.blank && x.s.price && (!cat || (x.d.category || 'Без категории') === cat));
+let anaKind = 'single', whatIf = { ing: '', pct: 20 };
+function moneyTable(e, pt) {
+  const row = (name, v, hint) => v > 0.5 ? `<tr><td>${name}</td><td class="r">−${rub(v)}</td><td class="muted">${hint || ''}</td></tr>` : '';
+  return `<div class="tw"><table class="money">
+    <tr><td>Выручка</td><td class="r">${rub(e.rev)}</td><td class="muted">${e.qty} порций, ${rub(e.rev / e.D)} в день</td></tr>
+    ${row('Продукты и упаковка', e.food, `${pct(Math.round(e.food / e.rev * 100))} от выручки`)}
+    ${row('Комиссия агрегаторов', e.agg, `${pct(e.agg / e.rev * 100)} от выручки`)}
+    ${row('Эквайринг и СБП', e.acq, `${pct(e.acq / e.rev * 100)} от выручки`)}
+    ${row('Своя доставка', e.del)}
+    ${row('НДС', e.vat, `${pt.tax.vat}%, внутри цены`)}
+    <tr class="sub"><td>Остаётся с блюд</td><td class="r">${rub(e.gross)}</td><td class="muted">${rub(e.qty ? e.gross / e.qty : 0)} с порции</td></tr>
+    ${row('Постоянные расходы', e.fixed, e.D === 30 ? 'за месяц' : `пересчитано на ${days(e.D)}`)}
+    ${row('Налог', e.tax, e.taxNote)}
+    <tr class="total"><td>Прибыль</td><td class="r ${e.net < 0 ? 'bad' : 'good'}">${rub(e.net)}</td><td class="muted">${rub(e.net / e.D)} в день</td></tr>
+  </table></div>`;
+}
+function analysisRows(pt, kind) {
+  return db.dishes.map(d => ({ d, s: stats(d, pt), q: qtyOf(d, pt) }))
+    .filter(x => x.q > 0 && !x.s.blank && x.s.price && isFinite(x.s.c) && (kind === 'all' || (kind === 'sets') === isSet(x.d)));
 }
 function renderAnalysis() {
-  if (!db.dishes.some(d => qtyOf(d))) { view.innerHTML = '<h1>Анализ</h1>' + noSales(); return; }
-  const days = db.sales.days, ch = db.channel;
-  const all = analysisRows('');
-  const skipped = db.dishes.filter(d => qtyOf(d) && stats(d).blank);
-  let qty = 0, rev = 0, cst = 0, fee = 0;
-  for (const x of all) { qty += x.q; rev += x.q * x.s.price; cst += x.q * x.s.c; fee += x.q * x.s.price * ch.share / 100 * ch.fee / 100; }
-  const gross = rev - cst - fee, fixed = db.fixed.reduce((a, f) => a + (+f.sum || 0), 0) * days / 30;
-  const net = gross - fixed, avg = qty ? gross / qty : 0, be = avg > 0 ? Math.ceil(fixed / avg) : NaN;
+  const pt = P();
+  const cmp = db.points.length > 1 ? `<div class="card"><h2>Точки</h2><div class="tw"><table>
+    <thead><tr><th>Точка</th><th class="r">Выручка</th><th class="r">Фудкост</th><th class="r hide-m">С порции</th><th class="r">Прибыль</th><th class="r hide-m">В день</th></tr></thead>
+    <tbody>${db.points.map(p => { const e = econ(p); return `<tr class="row${p.id === pt.id ? ' cur' : ''}" data-pt="${p.id}"><td>${esc(p.name)}</td><td class="r">${rub(e.rev)}</td><td class="r">${e.rev ? pct(Math.round(e.food / e.rev * 100)) : '—'}</td><td class="r hide-m">${e.qty ? rub(e.gross / e.qty) : '—'}</td><td class="r ${e.net < 0 ? 'bad' : ''}">${rub(e.net)}</td><td class="r hide-m">${rub(e.net / e.D)}</td></tr>`; }).join('')}</tbody>
+    </table></div><p class="small muted">Каждая точка считается за свой период продаж. Нажмите на строку, чтобы открыть точку.</p></div>` : '';
 
-  // матрица
-  const cats = [...new Set(all.map(x => x.d.category || 'Без категории'))];
-  const rows = analysisRows(anaCat);
+  if (!db.dishes.some(d => qtyOf(d, pt))) { view.innerHTML = '<div class="head"><h1>Анализ</h1></div>' + cmp + noSales(); bindCmp(); return; }
+  const e = econ(pt);
+  const rows = analysisRows(pt, anaKind);
   const tq = rows.reduce((a, x) => a + x.q, 0);
-  const popLine = rows.length ? 0.7 * tq / rows.length : 0;        // правило 70%
-  const mLine = tq ? rows.reduce((a, x) => a + x.q * x.s.eff, 0) / tq : 0; // средневзвешенная маржа
+  const popLine = rows.length ? 0.7 * tq / rows.length : 0;           // правило 70%
+  const mLine = tq ? rows.reduce((a, x) => a + x.q * x.s.eff, 0) / tq : 0; // средняя с порции, взвешенная по продажам
   for (const x of rows) x.k = x.q >= popLine ? (x.s.eff >= mLine ? 'star' : 'horse') : (x.s.eff >= mLine ? 'puzzle' : 'dog');
-
   const groups = Object.keys(QUAD).map(k => {
     const list = rows.filter(x => x.k === k).sort((a, b) => b.q * b.s.eff - a.q * a.s.eff);
     if (!list.length) return '';
-    const items = list.map(x => {
+    return `<div class="quad ${k}"><h3>${QUAD[k].name} <span class="muted">${list.length}</span></h3><p class="muted small">${QUAD[k].hint}</p><ul class="qlist">${list.map(x => {
       let tip = '';
-      if (k === 'horse') { const up = db.round === '90' ? 50 : 30; tip = ` <span class="muted">Цена +${up} ₽ даст ${rub(x.q * up * (1 - ch.share / 100 * ch.fee / 100))} за период, если продажи не упадут.</span>`; }
-      if (k === 'dog') tip = ` <span class="muted">${pct(x.q * x.s.price / rev * 100)} выручки.</span>`;
-      return `<li><a href="#dish/${x.d.id}">${esc(x.d.name)}</a>: ${x.q} шт, маржа ${rub(x.s.eff)} с порции, всего ${rub(x.q * x.s.eff)}.${tip}</li>`;
-    }).join('');
-    return `<h3>${QUAD[k].name} <span class="muted">${list.length}</span></h3><p class="muted">${QUAD[k].hint}</p><ul class="qlist">${items}</ul>`;
+      if (k === 'horse') { const up = db.round === '90' ? 100 : db.round === '50' ? 50 : 30; tip = ` <span class="muted">Цена +${up} ₽ даст ${rub(x.q * up * (1 - e.r.total))} за период, если продажи не упадут.</span>`; }
+      if (k === 'dog') tip = ` <span class="muted">${pct(x.q * x.s.price / e.rev * 100)} выручки.</span>`;
+      return `<li><a href="#dish/${x.d.id}">${esc(x.d.name)}</a>: ${x.q} шт, ${rub(x.s.eff)} с порции, всего ${rub(x.q * x.s.eff)}.${tip}</li>`;
+    }).join('')}</ul></div>`;
   }).join('');
 
-  // что если
+  const all = analysisRows(pt, 'all');
   const usedIngs = db.ing.filter(i => all.some(x => usesIng(x.d, i.id))).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
   if (!usedIngs.some(i => i.id === whatIf.ing)) {
-    // по умолчанию самый дорогой по доле в себестоимости продаж
-    const u = salesUsage(); let best = null, bv = -1;
-    for (const i of usedIngs) { const v = (u.get(i.id) || 0) * unitPrice(i) * (1 - Math.min(95, +i.waste || 0) / 100); if (v > bv) { bv = v; best = i; } }
+    const u = salesUsage(pt); let best = null, bv = -1;
+    for (const i of usedIngs) { const v = (u.get(i.id) || 0) * unitPrice(i) * wasteK(i); if (v > bv) { bv = v; best = i; } }
     whatIf.ing = best ? best.id : '';
   }
+  const loss = all.filter(x => x.s.eff < 0);
 
   view.innerHTML = `
-    <h1>Анализ</h1>
-    <p class="muted">За ${days} ${plural(days, 'день', 'дня', 'дней')} по данным вкладки «Продажи».${skipped.length ? ` Не учтены ${skipped.length} ${plural(skipped.length, 'блюдо', 'блюда', 'блюд')} без состава: ${skipped.slice(0, 5).map(d => `<a href="#dish/${d.id}">${esc(d.name)}</a>`).join(', ')}${skipped.length > 5 ? '…' : ''}` : ''}</p>
+    <div class="head"><h1>Анализ</h1></div>
+    <p class="lead">Точка «${esc(pt.name)}» за ${days(e.D)}.${e.skipped.length ? ` Не учтены ${e.skipped.length} ${plural(e.skipped.length, 'блюдо', 'блюда', 'блюд')} без состава или цены: ${e.skipped.slice(0, 4).map(d => `<a href="#dish/${d.id}">${esc(d.name)}</a>`).join(', ')}${e.skipped.length > 4 ? '…' : ''}.` : ''}</p>
+    ${cmp}
+    <div class="card">
+      <h2>Деньги за период</h2>
+      ${moneyTable(e, pt)}
+      ${isFinite(e.be) ? `<p>Точка безубыточности: <b>${e.be}</b> ${plural(e.be, 'порция', 'порции', 'порций')} за период, ${Math.ceil(e.be / e.D)} в день. Сейчас продаётся ${Math.round(e.qty / e.D)} в день${e.qty >= e.be ? `, запас ${pct(Math.round((e.qty - e.be) / e.qty * 100))}` : `, <b class="bad">не хватает ${Math.ceil((e.be - e.qty) / e.D)} в день</b>`}.</p>` : ''}
+      ${loss.length ? `<p class="bad">В убыток с каждой продажи: ${loss.map(x => `<a href="#dish/${x.d.id}">${esc(x.d.name)}</a>`).join(', ')}.</p>` : ''}
+      ${taxWarnings(pt, e)}
+      <p class="small muted">Расходы, комиссии и налог точки настраиваются во вкладке <a href="#costs">«Расходы»</a>.</p>
+    </div>
 
-    <table class="money">
-      <tr><td>Выручка</td><td class="r">${rub(rev)}</td><td class="muted">${qty} порций</td></tr>
-      <tr><td>Продукты и упаковка</td><td class="r">−${rub(cst)}</td><td class="muted">${pct(cst / rev * 100)} от выручки</td></tr>
-      ${fee ? `<tr><td>Комиссия агрегатора</td><td class="r">−${rub(fee)}</td><td class="muted">${ch.share}% заказов, комиссия ${ch.fee}%</td></tr>` : ''}
-      <tr class="sub"><td>Остаётся с блюд</td><td class="r">${rub(gross)}</td><td class="muted">${rub(avg)} в среднем с порции</td></tr>
-      <tr><td>Постоянные расходы</td><td class="r">−${rub(fixed)}</td><td class="muted">${db.fixed.length ? `${days === 30 ? 'за месяц' : `пересчитано на ${days} дн.`}` : '<a href="#analysis" id="toFixed">не заполнены</a>'}</td></tr>
-      <tr class="total"><td>Прибыль</td><td class="r ${net < 0 ? 'bad' : 'good'}">${rub(net)}</td><td class="muted">${rub(net / days)} в день</td></tr>
-    </table>
-    ${fixed && isFinite(be) ? `<p>Точка безубыточности: <b>${be}</b> ${plural(be, 'порция', 'порции', 'порций')} за период, это ${Math.ceil(be / days)} в день. Сейчас продаётся ${Math.round(qty / days)} в день${qty >= be ? `, запас ${pct((qty - be) / qty * 100)}` : `, не хватает ${Math.ceil((be - qty) / days)} в день`}.</p>` : ''}
+    <div class="card">
+      <h2>Меню-инжиниринг</h2>
+      <p class="muted small">Каждое блюдо сравнивается с остальными: как часто его берут и сколько рублей остаётся с порции. Наборы стоят дороже одного ролла, поэтому сравнивайте их отдельно.</p>
+      <div class="bar"><select id="akind"><option value="single">Блюда без наборов</option><option value="sets">Только наборы</option><option value="all">Всё вместе</option></select></div>
+      ${rows.length >= 3 ? matrixSvg(rows, popLine, mLine) + `<div class="quads">${groups}</div>` : '<p class="muted">Нужно хотя бы три блюда с продажами и составом.</p>'}
+    </div>
 
-    <h2>Меню-инжиниринг</h2>
-    <p class="muted">Каждое блюдо сравнивается с остальными по двум вещам: как часто его берут и сколько рублей оно оставляет с порции (с учётом комиссии). Сравнивать честнее внутри одной категории: сеты всегда приносят больше одного ролла.</p>
-    <div class="bar"><select id="acat"><option value="">Все категории</option>${cats.map(c => `<option${c === anaCat ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select></div>
-    ${rows.length >= 3 ? matrixSvg(rows, popLine, mLine) + groups : '<p class="muted">Нужно хотя бы три блюда с продажами и составом.</p>'}
-
-    <h2>Что если подорожает</h2>
-    ${usedIngs.length ? `<div class="bar">
-      <select id="wiIng">${usedIngs.map(i => `<option value="${i.id}"${i.id === whatIf.ing ? ' selected' : ''}>${esc(i.name)}</option>`).join('')}</select>
-      <label>на <input id="wiPct" type="number" step="5" value="${whatIf.pct}" style="width:70px"> %</label></div>
-      <div id="wiOut"></div>` : '<p class="muted">Нет продуктов в проданных блюдах.</p>'}
-
-    <h2 id="fixedH">Постоянные расходы в месяц</h2>
-    <div class="tw"><table class="edit"><tbody id="fixed">${db.fixed.map((f, k) => `<tr data-k="${k}">
-      <td><input data-f="name" value="${esc(f.name)}"></td><td class="r"><input class="n" data-f="sum" inputmode="numeric" value="${+f.sum || ''}"> <span class="unit">₽</span></td>
-      <td><button class="del" data-del>убрать</button></td></tr>`).join('')}</tbody></table></div>
-    <div class="bar"><button id="addFixed">Добавить расход</button></div>
-
-    <h2>Заказы через агрегатор</h2>
-    <p class="muted">Если часть заказов идёт через Яндекс Еду или похожий сервис, впишите долю таких заказов и комиссию из своего договора. Комиссия вычитается из маржи во всех расчётах.</p>
-    <div class="bar"><label>Доля заказов <input id="chShare" type="number" min="0" max="100" value="${ch.share}" style="width:70px"> %</label>
-      <label>Комиссия <input id="chFee" type="number" min="0" max="100" value="${ch.fee}" style="width:70px"> %</label></div>`;
-
-  const acat = $('#acat'); if (acat) acat.onchange = e => { anaCat = e.target.value; renderAnalysis(); };
-  const tf = $('#toFixed'); if (tf) tf.onclick = e => { e.preventDefault(); $('#fixedH').scrollIntoView(); };
+    <div class="card">
+      <h2>Что если подорожает</h2>
+      ${usedIngs.length ? `<div class="bar">
+        <select id="wiIng">${usedIngs.map(i => `<option value="${i.id}"${i.id === whatIf.ing ? ' selected' : ''}>${esc(i.name)}</option>`).join('')}</select>
+        <label>на <input id="wiPct" type="number" step="5" value="${whatIf.pct}" class="s"> %</label></div>
+        <div id="wiOut"></div>` : '<p class="muted">Нет продуктов в проданных блюдах.</p>'}
+    </div>`;
+  $('#akind').value = anaKind;
+  $('#akind').onchange = ev => { anaKind = ev.target.value; keepScroll(renderAnalysis); };
+  bindCmp();
 
   function drawWhatIf() {
     const out = $('#wiOut'); if (!out) return;
@@ -746,160 +741,261 @@ function renderAnalysis() {
     if (!i || !k) { out.innerHTML = ''; return; }
     const before = new Map(all.map(x => [x.d.id, x.s]));
     const old = i.price; i.price = old * (1 + k);
-    const after = all.map(x => ({ x, s: stats(x.d) }));
+    const after = all.map(x => ({ x, s: stats(x.d, pt) }));
     i.price = old;
-    let loss = 0; const crossed = [], raise = [];
+    let lossSum = 0; const crossed = [], raise = [];
     for (const { x, s } of after) {
       const dc = s.c - before.get(x.d.id).c; if (Math.abs(dc) < .01) continue;
-      loss += dc * x.q;
+      lossSum += dc * x.q;
       if (before.get(x.d.id).fc <= db.target && s.fc > db.target) crossed.push(x.d);
-      const need = roundPrice(x.s.price + dc / (1 - ch.share / 100 * ch.fee / 100)) - x.s.price;
+      const need = roundPrice(x.s.price + dc / (1 - e.r.total)) - x.s.price;
       if (need > 0) raise.push([x.d, need, x.q]);
     }
     raise.sort((a, b) => b[1] * b[2] - a[1] * a[2]);
-    out.innerHTML = `<p>${k > 0 ? 'Если' : 'Если подешевеет:'} «${esc(i.name)}» ${k > 0 ? 'подорожает' : 'станет дешевле'} на ${Math.abs(whatIf.pct)}%, прибыль за период ${loss > 0 ? 'упадёт' : 'вырастет'} на <b class="${loss > 0 ? 'bad' : 'good'}">${rub(Math.abs(loss))}</b>${fixed ? `, это ${pct(Math.abs(loss) / Math.max(1, Math.abs(net)) * 100)} от текущей прибыли` : ''}.</p>
+    out.innerHTML = `<p>Если «${esc(i.name)}» ${k > 0 ? 'подорожает' : 'подешевеет'} на ${Math.abs(whatIf.pct)}%, прибыль за ${days(e.D)} ${lossSum > 0 ? 'упадёт' : 'вырастет'} на <b class="${lossSum > 0 ? 'bad' : 'good'}">${rub(Math.abs(lossSum))}</b>${e.net > 0 ? `, это ${pct(Math.round(Math.abs(lossSum) / e.net * 100))} от текущей прибыли` : ''}.</p>
       ${crossed.length ? `<p>Станут дороже цели ${db.target}%: ${crossed.map(d => `<a href="#dish/${d.id}">${esc(d.name)}</a>`).join(', ')}.</p>` : ''}
       ${k > 0 && raise.length ? `<p class="muted">Чтобы не потерять в деньгах, хватит поднять цены:</p><ul class="qlist">${raise.slice(0, 8).map(([d, n]) => `<li>${esc(d.name)}: на ${rub(n)}, до ${rub(d.price + n)}</li>`).join('')}</ul>` : ''}`;
   }
   drawWhatIf();
-  const wi = $('#wiIng'); if (wi) wi.onchange = e => { whatIf.ing = e.target.value; drawWhatIf(); };
-  const wp = $('#wiPct'); if (wp) wp.oninput = e => { whatIf.pct = parseNum(e.target.value); drawWhatIf(); };
-
-  const fx = $('#fixed');
-  fx.onchange = e => {
-    const tr = e.target.closest('tr'), f = e.target.dataset.f; if (!tr || !f) return;
-    db.fixed[+tr.dataset.k][f] = f === 'sum' ? parseNum(e.target.value) : e.target.value; save(); renderAnalysis(); $('#fixedH').scrollIntoView();
-  };
-  fx.onclick = e => { const b = e.target.closest('[data-del]'); if (!b) return; db.fixed.splice(+b.closest('tr').dataset.k, 1); save(); renderAnalysis(); $('#fixedH').scrollIntoView(); };
-  $('#addFixed').onclick = () => { db.fixed.push({ name: '', sum: 0 }); save(); renderAnalysis(); $('#fixedH').scrollIntoView(); const ins = view.querySelectorAll('#fixed input[data-f="name"]'); ins[ins.length - 1].focus(); };
-  const chg = () => { db.channel.share = Math.min(100, Math.max(0, parseNum($('#chShare').value))); db.channel.fee = Math.min(100, Math.max(0, parseNum($('#chFee').value))); save(); const y = scrollY; renderAnalysis(); scrollTo(0, y); };
-  $('#chShare').onchange = chg; $('#chFee').onchange = chg;
+  const wi = $('#wiIng'); if (wi) wi.onchange = ev => { whatIf.ing = ev.target.value; drawWhatIf(); };
+  const wp = $('#wiPct'); if (wp) wp.oninput = ev => { whatIf.pct = parseNum(ev.target.value); drawWhatIf(); };
+}
+function bindCmp() {
+  view.querySelectorAll('tr[data-pt]').forEach(tr => tr.onclick = () => { db.cur = tr.dataset.pt; save(); syncPoint(); keepScroll(renderAnalysis); });
+}
+// Подсказки по налогам РФ с 2026 года
+function taxWarnings(pt, e) {
+  const t = pt.tax, out = [];
+  const total = db.points.reduce((a, p) => a + econ(p).annual, 0);
+  const many = db.points.length > 1, top = Math.max(e.annual, total);
+  const est = `${mln(e.annual)} в год${many ? `, по всем точкам ${mln(total)}` : ''}`;
+  if (t.mode === 'usn6' || t.mode === 'usn15') {
+    if (!+t.vat && top > 20e6)
+      out.push(`Выручка выходит около ${est}. С 2026 года на УСН НДС платят, если доходы за год больше 20 млн ₽. Общепит может быть освобождён по ст. 149 НК РФ, если на него приходится не меньше 70% доходов и выполнены остальные условия. Если льготы нет, выберите НДС 5% или 7% во вкладке «Расходы». Уточните у бухгалтера.`);
+    if (+t.vat === 5 && top > 272.5e6)
+      out.push(`НДС 5% на УСН можно применять, пока доходы за 2026 год не больше 272,5 млн ₽. У вас выходит около ${est}.`);
+    if (top > 490.5e6)
+      out.push(`Лимит доходов для УСН в 2026 году 490,5 млн ₽, у вас выходит около ${est}.`);
+  }
+  return out.map(x => `<p class="warn">${x}</p>`).join('');
 }
 
 function matrixSvg(rows, popLine, mLine) {
-  const W = 680, H = 380, L = 56, R = 16, T = 18, B = 40;
+  const W = 680, H = 380, L = 64, R = 16, T = 18, B = 40;
   const maxQ = Math.max(...rows.map(x => x.q), popLine) * 1.08;
   const ms = rows.map(x => x.s.eff), minM = Math.min(0, ...ms), maxM = Math.max(...ms, mLine) * 1.1;
-  const sx = q => L + Math.sqrt(q / maxQ) * (W - L - R);          // корень: мелкие продажи не слипаются у нуля
+  const sx = q => L + Math.sqrt(q / maxQ) * (W - L - R);   // корень: блюда с малыми продажами не слипаются у нуля
   const sy = m => T + (1 - (m - minM) / (maxM - minM || 1)) * (H - T - B);
   const px = sx(popLine), py = sy(mLine);
-  // подписи: сначала самые денежные блюда, без наложений; кому не хватило места, видно при наведении
-  const boxes = [], labels = new Map();
+  const order = rows.slice().sort((a, b) => b.q * b.s.eff - a.q * a.s.eff);
+  const boxes = order.map(x => ({ x: sx(x.q) - 6, y: sy(x.s.eff) - 6, w: 12, h: 12 })), labels = new Map();
   const hit = b => boxes.some(o => b.x < o.x + o.w && b.x + b.w > o.x && b.y < o.y + o.h && b.y + b.h > o.y);
-  for (const x of rows.slice().sort((a, b) => b.q * b.s.eff - a.q * a.s.eff)) {
+  for (const x of order) {
     const cx = sx(x.q), cy = sy(x.s.eff);
-    boxes.push({ x: cx - 6, y: cy - 6, w: 12, h: 12 });
-  }
-  for (const x of rows.slice().sort((a, b) => b.q * b.s.eff - a.q * a.s.eff)) {
-    const cx = sx(x.q), cy = sy(x.s.eff);
-    const t = x.d.name.length > 22 ? x.d.name.slice(0, 21) + '…' : x.d.name, w = t.length * 6.3 + 4;
-    const mid = Math.min(Math.max(cx - w / 2, L + 2), W - R - w); // над и под точкой прижимаем к краю поля
-    const spots = [[cx + 8, cy - 7], [cx - 8 - w, cy - 7], [mid, cy - 22], [mid, cy + 8]];
-    for (const [bx, by] of spots) {
+    const t = x.d.name.length > 22 ? x.d.name.slice(0, 21) + '…' : x.d.name, w = t.length * 6.4 + 4;
+    const mid = Math.min(Math.max(cx - w / 2, L + 2), W - R - w);
+    for (const [bx, by] of [[cx + 8, cy - 7], [cx - 8 - w, cy - 7], [mid, cy - 22], [mid, cy + 8]]) {
       const b = { x: bx, y: by, w, h: 14 };
       if (bx < L || bx + w > W - R || by < T || by + 14 > H - B || hit(b)) continue;
-      boxes.push(b);
-      labels.set(x.d.id, { t, x: bx + 2, y: by + 11, anchor: 'start' });
-      break;
+      boxes.push(b); labels.set(x.d.id, { t, x: bx + 2, y: by + 11 }); break;
     }
   }
-  const nice = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
   const ticks = [0];
-  for (const v of nice) if (v <= maxQ / 1.08 && sx(v) - sx(ticks[ticks.length - 1]) >= 44) ticks.push(v);
+  for (const v of [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]) if (v <= maxQ / 1.08 && sx(v) - sx(ticks[ticks.length - 1]) >= 44) ticks.push(v);
   const dots = rows.map(x => {
     const cx = sx(x.q), cy = sy(x.s.eff), lb = labels.get(x.d.id);
-    return `<a href="#dish/${x.d.id}"><circle class="dot ${x.k}" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5"><title>${esc(x.d.name)}: ${x.q} шт, ${rub(x.s.eff)} с порции</title></circle>
-      ${lb ? `<text x="${lb.x.toFixed(1)}" y="${lb.y.toFixed(1)}" text-anchor="${lb.anchor}" class="lbl">${esc(lb.t)}</text>` : ''}</a>`;
+    return `<a href="#dish/${x.d.id}"><circle class="dot ${x.k}" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5.5"><title>${esc(x.d.name)}: ${x.q} шт, ${rub(x.s.eff)} с порции</title></circle>${lb ? `<text x="${lb.x.toFixed(1)}" y="${lb.y.toFixed(1)}" class="lbl">${esc(lb.t)}</text>` : ''}</a>`;
   }).join('');
-  return `<div class="tw"><svg class="matrix" viewBox="0 0 ${W} ${H}" role="img" aria-label="Матрица меню: продажи по горизонтали, маржа по вертикали">
-    <rect x="${px}" y="${T}" width="${W - R - px}" height="${py - T}" class="q-star"/>
-    <text x="${W - R - 6}" y="${T + 16}" text-anchor="end" class="qname">звёзды</text>
-    <text x="${L + 6}" y="${T + 16}" class="qname">загадки</text>
-    <text x="${W - R - 6}" y="${H - B - 8}" text-anchor="end" class="qname">лошадки</text>
-    <text x="${L + 6}" y="${H - B - 8}" class="qname">собаки</text>
+  return `<div class="tw"><svg class="matrix" viewBox="0 0 ${W} ${H}" role="img" aria-label="Матрица меню: продажи по горизонтали, деньги с порции по вертикали">
+    <rect x="${px}" y="${T}" width="${W - R - px}" height="${py - T}" class="q-star" rx="10"/>
+    <text x="${W - R - 8}" y="${T + 18}" text-anchor="end" class="qname">звёзды</text>
+    <text x="${L + 8}" y="${T + 18}" class="qname">загадки</text>
+    <text x="${W - R - 8}" y="${H - B - 10}" text-anchor="end" class="qname">лошадки</text>
+    <text x="${L + 8}" y="${H - B - 10}" class="qname">собаки</text>
     <line x1="${px}" x2="${px}" y1="${T}" y2="${H - B}" class="th"/><line x1="${L}" x2="${W - R}" y1="${py}" y2="${py}" class="th"/>
     <line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" class="ax"/><line x1="${L}" x2="${L}" y1="${T}" y2="${H - B}" class="ax"/>
     ${ticks.map(v => `<text x="${sx(v)}" y="${H - B + 16}" text-anchor="middle" class="tick">${v}</text>`).join('')}
     <text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle" class="tick">продано, шт</text>
     <text x="${L - 8}" y="${py + 4}" text-anchor="end" class="tick">${Math.round(mLine)} ₽</text>
     <text x="${L - 8}" y="${T + 10}" text-anchor="end" class="tick">${Math.round(maxM / 1.1)} ₽</text>
-    <text x="14" y="${(T + H - B) / 2}" transform="rotate(-90 14 ${(T + H - B) / 2})" text-anchor="middle" class="tick">маржа с порции</text>
+    ${minM < 0 ? `<line x1="${L}" x2="${W - R}" y1="${sy(0)}" y2="${sy(0)}" class="zero"/><text x="${L - 8}" y="${sy(0) + 4}" text-anchor="end" class="tick">0 ₽</text>` : ''}
+    <text x="14" y="${(T + H - B) / 2}" transform="rotate(-90 14 ${(T + H - B) / 2})" text-anchor="middle" class="tick">остаётся с порции</text>
     ${dots}</svg></div>`;
 }
 
-/* ---------- Сверка: по техкартам и по факту ---------- */
+/* =========================================================================
+   Расходы и налоги точки
+   ========================================================================= */
+function renderCosts() {
+  const pt = P(), t = pt.tax, r = rates(pt);
+  const fld = (id, label, val, hint, unit = '') => `<label class="fld">${label}<span class="inp"><input id="${id}" type="number" min="0" step="any" value="${val || val === 0 ? val : ''}">${unit ? `<span class="unit">${unit}</span>` : ''}</span>${hint ? `<span class="hint">${hint}</span>` : ''}</label>`;
+  const fixedSum = pt.fixed.reduce((a, f) => a + (+f.sum || 0), 0);
+  view.innerHTML = `
+    <div class="head"><h1>Расходы</h1></div>
+    <p class="lead">Точка «${esc(pt.name)}». С каждой продажи сейчас уходит ${pct(r.total * 100)} цены на комиссии, эквайринг, доставку и налоги с выручки.</p>
+
+    <div class="card">
+      <h2>Постоянные расходы в месяц</h2>
+      <div class="tw"><table class="edit"><tbody id="fixed">${pt.fixed.map((f, k) => `<tr data-k="${k}">
+        <td><input data-f="name" value="${esc(f.name)}" placeholder="Например, аренда"></td><td class="r"><input class="n" data-f="sum" inputmode="numeric" value="${+f.sum || ''}"><span class="unit">₽</span></td>
+        <td><button class="del" data-del>убрать</button></td></tr>`).join('') || '<tr><td class="muted">Пока пусто.</td></tr>'}</tbody>
+        <tfoot><tr class="total"><td>Итого</td><td class="r">${rub(fixedSum)}</td><td></td></tr></tfoot></table></div>
+      <div class="bar"><button class="ghost" id="addFixed">Добавить расход</button></div>
+      <p class="small muted">Аренда, зарплаты вместе со страховыми взносами, реклама, коммунальные, связь, программы (касса, сайт), вывоз мусора. Всё, что платится, даже если заказов нет.</p>
+    </div>
+
+    <div class="card">
+      <h2>Агрегаторы</h2>
+      <div class="tw"><table class="edit"><thead><tr><th>Сервис</th><th class="r">Доля заказов</th><th class="r">Комиссия</th><th></th></tr></thead><tbody id="chs">${pt.channels.map((c, k) => `<tr data-k="${k}">
+        <td><input data-f="name" value="${esc(c.name)}" placeholder="Яндекс Еда, Маркет Деливери…"></td>
+        <td class="r"><input class="n s" data-f="share" inputmode="decimal" value="${num(c.share)}"><span class="unit">%</span></td>
+        <td class="r"><input class="n s" data-f="fee" inputmode="decimal" value="${num(c.fee)}"><span class="unit">%</span></td>
+        <td><button class="del" data-del>убрать</button></td></tr>`).join('') || '<tr><td class="muted" colspan="4">Заказы только через свои каналы.</td></tr>'}</tbody></table></div>
+      <div class="bar"><button class="ghost" id="addCh">Добавить агрегатор</button></div>
+      <p class="small muted">Долю заказов возьмите из кассы за тот же период. Комиссию — из договора: она разная для доставки курьерами сервиса и своими, плюс бывает плата за продвижение. Эквайринг и своя доставка ниже считаются только на остальные заказы.</p>
+    </div>
+
+    <div class="card">
+      <h2>Оплата и доставка</h2>
+      <div class="grid">
+        ${fld('payShare', 'Оплачивают картой или СБП', pt.pay.share, 'доля своих заказов', '%')}
+        ${fld('payFee', 'Комиссия банка', pt.pay.fee, 'по тарифу эквайринга; у СБП обычно ниже, чем у карт', '%')}
+        ${fld('dCheck', 'Средний чек', pt.delivery.check, 'чтобы посчитать число заказов', '₽')}
+        ${fld('dShare', 'Заказов с доставкой', pt.delivery.share, 'среди своих заказов', '%')}
+        ${fld('dCost', 'Стоимость одной доставки', pt.delivery.cost, 'сдельная оплата курьеру, такси, бензин. Если курьер на окладе и оклад уже в постоянных расходах, ставьте 0', '₽')}
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Налоги</h2>
+      <div class="grid">
+        <label class="fld">Режим<span class="inp"><select id="taxMode">
+          <option value="none">Не учитывать</option><option value="usn6">УСН «Доходы»</option><option value="usn15">УСН «Доходы минус расходы»</option><option value="fixed">Патент или другая сумма в месяц</option>
+        </select></span></label>
+        ${t.mode === 'usn6' || t.mode === 'usn15' ? fld('taxRate', 'Ставка', t.rate, t.mode === 'usn6' ? 'обычно 6%, в некоторых регионах ниже' : 'обычно 15%, в некоторых регионах ниже; минимальный налог 1% с доходов', '%') : ''}
+        ${t.mode === 'usn6' ? fld('taxReduce', 'Взносы, на которые уменьшается налог', t.reduce, 'в месяц. ИП без работников уменьшает налог на все свои взносы, ИП с работниками и организации — не больше чем наполовину', '₽') : ''}
+        ${t.mode === 'fixed' ? fld('taxFixed', 'Сумма в месяц', t.fixed, 'стоимость патента или другой налог, разделённый на 12', '₽') : ''}
+        ${t.mode === 'usn6' || t.mode === 'usn15' ? `<label class="fld">НДС<span class="inp"><select id="taxVat"><option value="0">Не плачу или освобождён</option><option value="5">5%</option><option value="7">7%</option></select></span><span class="hint">С 2026 года на УСН НДС платят при доходах больше 20 млн ₽ за год. Ставка 5% до 272,5 млн ₽ дохода, 7% до 490,5 млн ₽.</span></label>` : ''}
+      </div>
+      ${taxWarnings(pt, econ(pt))}
+      <p class="small muted">Налог считается примерно: этого хватает, чтобы оценить прибыль, но бухгалтера не заменяет.</p>
+    </div>`;
+
+  $('#taxMode').value = t.mode;
+  const tv = $('#taxVat'); if (tv) tv.value = String(+t.vat || 0);
+  const upd = (id, fn) => { const el = $('#' + id); if (el) el.onchange = ev => { fn(ev.target.value); save(); keepScroll(renderCosts); }; };
+  upd('payShare', v => pt.pay.share = Math.min(100, parseNum(v)));
+  upd('payFee', v => pt.pay.fee = Math.min(100, parseNum(v)));
+  upd('dCheck', v => pt.delivery.check = parseNum(v));
+  upd('dShare', v => pt.delivery.share = Math.min(100, parseNum(v)));
+  upd('dCost', v => pt.delivery.cost = parseNum(v));
+  upd('taxMode', v => { t.mode = v; if (v === 'usn6' && (!+t.rate || +t.rate === 15)) t.rate = 6; if (v === 'usn15' && (!+t.rate || +t.rate === 6)) t.rate = 15; if (v === 'none' || v === 'fixed') t.vat = 0; });
+  upd('taxRate', v => t.rate = Math.min(100, parseNum(v)));
+  upd('taxReduce', v => t.reduce = parseNum(v));
+  upd('taxFixed', v => t.fixed = parseNum(v));
+  upd('taxVat', v => t.vat = +v);
+
+  const table = (sel, arr, mk) => {
+    const tb = $(sel);
+    tb.onchange = ev => {
+      const tr = ev.target.closest('tr[data-k]'), f = ev.target.dataset.f; if (!tr || !f) return;
+      arr[+tr.dataset.k][f] = f === 'name' ? ev.target.value : parseNum(ev.target.value);
+      save(); keepScroll(renderCosts);
+      if (f === 'share' && arr.reduce((a, c) => a + (+c.share || 0), 0) > 100) note('Сумма долей заказов агрегаторов больше 100%. Проверьте цифры.');
+    };
+    tb.onclick = ev => { const b = ev.target.closest('[data-del]'); if (!b) return; arr.splice(+b.closest('tr').dataset.k, 1); save(); keepScroll(renderCosts); };
+    return () => { arr.push(mk()); save(); keepScroll(renderCosts); const ins = view.querySelectorAll(sel + ' input[data-f="name"]'); ins[ins.length - 1].focus(); };
+  };
+  $('#addFixed').onclick = table('#fixed', pt.fixed, () => ({ name: '', sum: 0 }));
+  $('#addCh').onclick = table('#chs', pt.channels, () => ({ name: '', share: 0, fee: 0 }));
+}
+
+/* =========================================================================
+   Сверка: по техкартам и по факту
+   ========================================================================= */
 function renderCheck() {
-  if (!db.dishes.some(d => qtyOf(d))) { view.innerHTML = '<h1>Сверка</h1>' + noSales(); return; }
-  const u = salesUsage();
-  const ings = db.ing.filter(i => u.get(i.id) > 0 || db.stock[i.id]).sort((a, b) => (u.get(b.id) || 0) * packOf(b) / UNITS[b.unit].k - (u.get(a.id) || 0) * packOf(a) / UNITS[a.unit].k);
-  const st = id => db.stock[id] || {};
+  const pt = P();
+  if (!db.dishes.some(d => qtyOf(d, pt))) { view.innerHTML = '<div class="head"><h1>Сверка</h1></div>' + noSales(); return; }
+  const u = salesUsage(pt);
+  const ings = db.ing.filter(i => u.get(i.id) > 0 || pt.stock[i.id])
+    .sort((a, b) => toUnit(u.get(b.id) || 0, b) * packOf(b) - toUnit(u.get(a.id) || 0, a) * packOf(a));
+  const st = id => pt.stock[id] || {};
+  const has = v => v !== undefined && v !== '';
   const calc = i => {
     const s = st(i.id), theory = toUnit(u.get(i.id) || 0, i);
-    const filled = ['start', 'in', 'end'].some(k => s[k] !== undefined && s[k] !== '');
+    const filled = has(s.start) || has(s.in) || has(s.end);
     const fact = filled ? (+s.start || 0) + (+s.in || 0) - (+s.end || 0) : NaN;
-    const diff = fact - theory;
-    return { theory, fact, diff, money: diff * packOf(i), filled };
+    const out = +s.out || 0;
+    const lost = fact - out - theory;                 // то, что не объяснено ни продажами, ни списаниями
+    return { theory, fact, out, lost, money: lost * packOf(i), outMoney: out * packOf(i), filled };
   };
-  let rev = 0, cst = 0;
-  for (const d of db.dishes) { const q = qtyOf(d); if (q && !stats(d).blank) { rev += q * d.price; cst += q * cost(d); } }
+  let rev = 0, food = 0;
+  for (const d of db.dishes) { const q = qtyOf(d, pt); if (q && !stats(d, pt).blank) { rev += q * d.price; food += q * cost(d); } }
 
   view.innerHTML = `
-    <h1>Сверка</h1>
-    <p class="muted">Сколько продуктов должно было уйти по техкартам на продажи за ${db.sales.days} ${plural(db.sales.days, 'день', 'дня', 'дней')}, и сколько ушло на самом деле по остаткам. Разница — это перевес порций, списания, испорченное или то, что ушло мимо кассы.</p>
-    <p class="muted">По факту = остаток на начало + пришло − остаток на конец. Заполните хотя бы те продукты, что дороже всего: они сверху.</p>
+    <div class="head"><h1>Сверка</h1></div>
+    <p class="lead">Точка «${esc(pt.name)}» за ${days(pt.sales.days)}. Сколько продуктов должно было уйти по техкартам на продажи и сколько ушло на самом деле по остаткам.</p>
     <div id="chSum"></div>
-    <div class="tw"><table class="edit"><thead><tr><th>Продукт</th><th class="r">На начало</th><th class="r">Пришло</th><th class="r">На конец</th>
-      <th class="r">По факту</th><th class="r">По техкартам</th><th class="r">Разница</th></tr></thead>
-    <tbody id="chk">${ings.map(i => {
-      const s = st(i.id);
-      return `<tr data-id="${i.id}"><td>${esc(i.name)}</td>
-        ${['start', 'in', 'end'].map(k => `<td class="r"><input class="n" data-f="${k}" inputmode="decimal" value="${s[k] !== undefined ? num(s[k]) : ''}" style="width:72px"><span class="unit">${i.unit}</span></td>`).join('')}
-        <td class="r" data-fact></td><td class="r muted" data-th></td><td class="r" data-diff></td></tr>`;
-    }).join('')}</tbody></table></div>`;
+    <div class="card">
+      <div class="tw"><table class="edit"><thead><tr><th>Продукт</th><th class="r">На начало</th><th class="r">Пришло</th><th class="r">Списано</th><th class="r">На конец</th>
+        <th class="r">По факту</th><th class="r">По техкартам</th><th class="r">Потери</th></tr></thead>
+      <tbody id="chk">${ings.map(i => {
+        const s = st(i.id);
+        return `<tr data-id="${i.id}"><td>${esc(i.name)}</td>
+          ${['start', 'in', 'out', 'end'].map(k => `<td class="r"><input class="n s" data-f="${k}" inputmode="decimal" value="${has(s[k]) ? num(s[k]) : ''}"><span class="unit">${i.unit}</span></td>`).join('')}
+          <td class="r" data-fact></td><td class="r muted" data-th></td><td class="r" data-diff></td></tr>`;
+      }).join('')}</tbody></table></div>
+      <p class="small muted">По факту = на начало + пришло − на конец. Списано — то, что оформлено актом списания: испортилось, упало, истёк срок. Потери = по факту − списано − по техкартам: перевес порций, неучтённые пробы, то, что ушло мимо кассы. Заполните хотя бы самые дорогие продукты, они сверху.</p>
+    </div>`;
 
   function refresh() {
-    let lost = 0, worst = null;
+    let lost = 0, outM = 0, worst = null, any = false;
     view.querySelectorAll('#chk tr').forEach(tr => {
       const i = ingById(tr.dataset.id), r = calc(i);
       tr.querySelector('[data-fact]').textContent = r.filled ? fmtQ(r.fact, i) : '—';
       tr.querySelector('[data-th]').textContent = fmtQ(r.theory, i);
       const cell = tr.querySelector('[data-diff]');
       if (!r.filled) { cell.textContent = ''; return; }
-      const rel = r.theory ? r.diff / r.theory * 100 : 0;
-      cell.innerHTML = `${r.diff > 0 ? '+' : ''}${fmtQ(r.diff, i)}<br><span class="${r.diff > 0 && rel > 3 ? 'bad' : 'muted'}">${r.diff > 0 ? '+' : ''}${rub(r.money)}</span>`;
-      if (r.diff > 0) { lost += r.money; if (!worst || r.money > worst[1]) worst = [i, r.money, rel]; }
+      any = true; outM += r.outMoney;
+      const rel = r.theory ? r.lost / r.theory * 100 : 0;
+      cell.innerHTML = `${r.lost > 0 ? '+' : ''}${fmtQ(r.lost, i)}<br><span class="${r.lost > 0 && rel > 3 ? 'bad' : 'muted'}">${r.lost > 0 ? '+' : ''}${rub(r.money)}</span>`;
+      if (r.lost > 0) { lost += r.money; if (!worst || r.money > worst[1]) worst = [i, r.money, rel]; }
     });
-    $('#chSum').innerHTML = lost > 0
-      ? `<p class="report">Перерасход за период: <b class="bad">${rub(lost)}</b>. Фудкост по техкартам ${pct(cst / rev * 100)}, по факту около ${pct((cst + lost) / rev * 100)}. Больше всего уходит «${esc(worst[0].name)}»: на ${pct(worst[2])} больше нормы, ${rub(worst[1])}. Начните с проверки веса порций по этому продукту.</p>`
-      : view.querySelector('#chk [data-f]') && [...view.querySelectorAll('#chk tr')].some(tr => calc(ingById(tr.dataset.id)).filled)
-        ? '<p class="report good">Расхождений больше нормы нет.</p>' : '';
+    $('#chSum').innerHTML = !any ? '' : `<div class="card ${lost > 0 ? 'alert' : ''}">${lost > 0
+      ? `<p>Потери за период: <b class="bad">${rub(lost)}</b>${outM ? `, плюс списано по актам на ${rub(outM)}` : ''}. Фудкост по техкартам ${pct(Math.round(food / rev * 100))}, на деле около ${pct(Math.round((food + lost + outM) / rev * 100))}.</p>
+         <p>Больше всего уходит «${esc(worst[0].name)}»: на ${pct(Math.round(worst[2]))} больше нормы, ${rub(worst[1])}. Начните с контрольного взвешивания порций с этим продуктом.</p>`
+      : `<p class="good">Потерь сверх техкарт нет.${outM ? ` Списано по актам на ${rub(outM)}.` : ''}</p>`}</div>`;
   }
   refresh();
   $('#chk').oninput = e => {
     const tr = e.target.closest('tr'), f = e.target.dataset.f; if (!tr || !f) return;
-    const s = db.stock[tr.dataset.id] = db.stock[tr.dataset.id] || {};
+    const s = pt.stock[tr.dataset.id] = pt.stock[tr.dataset.id] || {};
     if (e.target.value.trim() === '') delete s[f]; else s[f] = parseNum(e.target.value);
     save(); refresh();
   };
 }
 
-/* ---------- Закупка ---------- */
+/* =========================================================================
+   Закупка
+   ========================================================================= */
 function renderBuy() {
-  if (!db.dishes.some(d => qtyOf(d))) { view.innerHTML = '<h1>Закупка</h1>' + noSales(); return; }
-  const P = db.plan;
+  const pt = P();
+  if (!db.dishes.some(d => qtyOf(d, pt))) { view.innerHTML = '<div class="head"><h1>Закупка</h1></div>' + noSales(); return; }
+  const Pl = pt.plan;
   view.innerHTML = `
-    <h1>Закупка</h1>
-    <p class="muted">Сколько купить, если продажи пойдут как в последнем периоде. Остатки подставляются из «Сверки» (остаток на конец), их можно поправить.</p>
-    <div class="bar"><label>На сколько дней <input id="pDays" type="number" min="1" max="60" value="${P.days}" style="width:70px"></label>
-      <label>Запас <input id="pRes" type="number" min="0" max="100" value="${P.reserve}" style="width:70px"> %</label>
-      <span class="grow"></span><button class="main" id="copyBuy">Скопировать для поставщика</button></div>
-    <div class="tw"><table class="edit"><thead><tr><th>Продукт</th><th class="r">Нужно</th><th class="r">Есть</th><th class="r">Купить</th><th class="r hide-m">Упаковок</th><th class="r">Сумма</th></tr></thead>
-    <tbody id="buy"></tbody><tfoot><tr class="total"><td colspan="5">Итого</td><td class="r" id="buyTot"></td></tr></tfoot></table></div>`;
-
+    <div class="head"><h1>Закупка</h1><button class="main" id="copyBuy">Скопировать для поставщика</button></div>
+    <p class="lead">Точка «${esc(pt.name)}». Сколько купить, если продажи пойдут как за последние ${days(pt.sales.days)}. Остатки подставляются из «Сверки», их можно поправить.</p>
+    <div class="card">
+      <div class="bar"><label>На сколько дней <input id="pDays" type="number" min="1" max="60" value="${Pl.days}" class="s"></label>
+        <label>Запас <input id="pRes" type="number" min="0" max="100" value="${Pl.reserve}" class="s"> %</label></div>
+      <div class="tw"><table class="edit"><thead><tr><th>Продукт</th><th class="r">Нужно</th><th class="r">Есть</th><th class="r">Купить</th><th class="r hide-m">Упаковок</th><th class="r">Сумма</th></tr></thead>
+      <tbody id="buy"></tbody><tfoot><tr class="total"><td colspan="5">Итого</td><td class="r" id="buyTot"></td></tr></tfoot></table></div>
+      <p class="small muted">Нужно — брутто, с учётом отхода и запаса. Купить округляется вверх до целых упаковок.</p>
+    </div>`;
   const rows = () => {
-    const u = salesUsage(P.days / db.sales.days * (1 + P.reserve / 100));
+    const u = salesUsage(pt, Pl.days / (+pt.sales.days || 30) * (1 + Pl.reserve / 100));
     return db.ing.filter(i => u.get(i.id) > 0).map(i => {
-      const need = toUnit(u.get(i.id), i), s = db.stock[i.id] || {};
+      const need = toUnit(u.get(i.id), i), s = pt.stock[i.id] || {};
       const have = s.now !== undefined ? +s.now : s.end !== undefined ? +s.end : 0;
       const buy = Math.max(0, need - have), packs = +i.qty > 0 ? Math.ceil(buy / +i.qty - 1e-9) : 0;
       return { i, need, have, buy, packs, sum: packs * (+i.price || 0) };
@@ -908,75 +1004,226 @@ function renderBuy() {
   const draw = () => {
     const r = rows();
     $('#buy').innerHTML = r.map(x => `<tr data-id="${x.i.id}"><td>${esc(x.i.name)}</td><td class="r muted">${fmtQ(x.need, x.i)}</td>
-      <td class="r"><input class="n" inputmode="decimal" value="${num(x.have)}" style="width:72px"><span class="unit">${x.i.unit}</span></td>
-      <td class="r"><b>${x.buy > 0 ? fmtQ(x.packs * x.i.qty, x.i) : '—'}</b></td><td class="r muted hide-m">${x.packs ? x.packs + ' по ' + num(x.i.qty) + ' ' + x.i.unit : ''}</td>
+      <td class="r"><input class="n s" inputmode="decimal" value="${num(x.have)}"><span class="unit">${x.i.unit}</span></td>
+      <td class="r"><b>${x.packs ? fmtQ(x.packs * x.i.qty, x.i) : '—'}</b></td><td class="r muted hide-m">${x.packs ? x.packs + ' × ' + num(x.i.qty) + ' ' + x.i.unit : ''}</td>
       <td class="r">${x.sum ? rub(x.sum) : ''}</td></tr>`).join('');
     $('#buyTot').textContent = rub(r.reduce((a, x) => a + x.sum, 0));
   };
   draw();
-  $('#pDays').oninput = e => { const v = parseNum(e.target.value); if (v >= 1) { P.days = v; save(); draw(); } };
-  $('#pRes').oninput = e => { P.reserve = Math.max(0, parseNum(e.target.value)); save(); draw(); };
+  $('#pDays').oninput = e => { const v = parseNum(e.target.value); if (v >= 1) { Pl.days = v; save(); draw(); } };
+  $('#pRes').oninput = e => { Pl.reserve = Math.max(0, parseNum(e.target.value)); save(); draw(); };
   $('#buy').onchange = e => {
     const tr = e.target.closest('tr'); if (!tr) return;
-    const s = db.stock[tr.dataset.id] = db.stock[tr.dataset.id] || {};
+    const s = pt.stock[tr.dataset.id] = pt.stock[tr.dataset.id] || {};
     s.now = parseNum(e.target.value); save(); draw();
   };
   $('#copyBuy').onclick = e => {
     const r = rows().filter(x => x.packs);
-    const text = `Заказ на ${P.days} ${plural(P.days, 'день', 'дня', 'дней')}:\n` + r.map(x => `${x.i.name}: ${num(x.packs * x.i.qty)} ${x.i.unit}`).join('\n');
-    copyText(text, e.target);
+    copyText(`${db.org ? db.org + ', ' : ''}${pt.name}. Заказ на ${days(Pl.days)}:\n` + r.map(x => `${x.i.name}: ${num(x.packs * x.i.qty)} ${x.i.unit}`).join('\n'), e.target);
   };
 }
 
-/* ---------- передача ссылкой ---------- */
-const unb64u = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+/* =========================================================================
+   Настройки: заведение, точки, импорт, данные
+   ========================================================================= */
+function importMenu(items, opt = {}) {
+  if (!Array.isArray(items)) throw new Error('В файле нет списка блюд.');
+  let added = 0, updated = 0;
+  const byName = new Map(db.dishes.map(d => [key(d.name), d]));
+  const touched = [];
+  for (const it of items) {
+    if (!it || !it.name) continue;
+    const price = +it.price || (Array.isArray(it.sizes) && it.sizes[0] ? +it.sizes[0].price || 0 : 0);
+    const w = String(it.description || '').match(/(\d+)\s*(?:гр|г)\b/i);
+    let d = byName.get(key(it.name));
+    if (d) { d.price = price || d.price; if (!d.yield && w) d.yield = +w[1]; updated++; }
+    else { d = { id: uid(), name: String(it.name).trim(), price, pack: 20, yield: w ? +w[1] : 0, parts: [], sub: [] }; db.dishes.push(d); byName.set(key(d.name), d); added++; }
+    touched.push([d, it]);
+  }
+  let sets = 0, found = 0; const missing = new Map();
+  const clean = l => key(l.replace(/\s*[x×х]\s*\d+$/i, ''));
+  for (const [d, it] of touched) {
+    if (hasRecipe(d) || !it.description) continue;
+    const lines = String(it.description).split('\n').map(s => s.trim()).filter(s => s && !/^вес\s*:/i.test(s));
+    if (lines.length < 2) continue;
+    const hits = lines.map(l => byName.get(clean(l))).filter(x => x && x !== d);
+    if (hits.length < 2 && !(opt.createMissing && /set|сет/i.test(it.category || ''))) continue;
+    sets++;
+    for (const l of lines) {
+      let sd = byName.get(clean(l));
+      if (!sd && opt.createMissing) {
+        sd = { id: uid(), name: l.replace(/\s*[x×х]\s*\d+$/i, ''), price: 0, pack: 0, yield: 0, parts: [], sub: [], setOnly: true };
+        db.dishes.push(sd); byName.set(clean(l), sd); added++;
+      }
+      if (sd && sd !== d) { const ex = d.sub.find(x => x.dish === sd.id); ex ? ex.n++ : d.sub.push({ dish: sd.id, n: 1 }); found++; }
+      else if (!sd) missing.set(l, 1);
+    }
+  }
+  db.demo = false; save();
+  return { added, updated, sets, found, missing: [...missing.keys()] };
+}
+function download(name, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+function renderSettings(report) {
+  view.innerHTML = `
+    <div class="head"><h1>Настройки</h1></div>
+    <div class="card">
+      <h2>Заведение</h2>
+      <div class="grid">
+        <label class="fld">Название<span class="inp"><input id="org" value="${esc(db.org)}" placeholder="Например, Фабрика суши"></span><span class="hint">в шапке, техкартах и заявке поставщику</span></label>
+        <label class="fld">Цель по фудкосту<span class="inp"><input id="target" type="number" min="5" max="90" value="${db.target}"><span class="unit">%</span></span><span class="hint">для доставки роллов обычно 30–35%</span></label>
+        <label class="fld">Округлять цены<span class="inp"><select id="round"><option value="10">до 10 ₽</option><option value="50">до 50 ₽</option><option value="90">на 90: 490, 590</option></select></span></label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Точки</h2>
+      <p class="muted small">Меню и продукты общие. У каждой точки свои продажи, остатки, расходы и налоги.</p>
+      <div class="tw"><table class="edit"><thead><tr><th>Название</th><th class="r">Продаж</th><th></th></tr></thead><tbody id="pts">${db.points.map(p => `<tr data-id="${p.id}">
+        <td><input data-f="name" value="${esc(p.name)}"></td>
+        <td class="r muted">${Object.values(p.sales.qty).reduce((a, v) => a + (+v || 0), 0)}</td>
+        <td class="r">${db.points.length > 1 ? '<button class="del" data-del>удалить</button>' : ''}</td></tr>`).join('')}</tbody></table></div>
+      <div class="bar"><button class="ghost" id="addPt">Добавить точку</button><label class="check"><input type="checkbox" id="copyPt" checked> с расходами и налогами точки «${esc(P().name)}»</label></div>
+    </div>
+
+    <div class="card">
+      <h2>Меню с сайта</h2>
+      <p class="muted small">Загрузите <code>menu.json</code> сайта доставки. Подтянутся названия, цены и вес. Наборы, у которых в описании по строкам перечислены роллы, соберутся из них сами.</p>
+      <div class="drop" id="drop"><input type="file" id="menuFile" accept=".json,application/json"> <span class="muted">или перетащите файл сюда</span></div>
+      ${report || ''}
+    </div>
+
+    <div class="card">
+      <h2>Данные</h2>
+      <p class="muted small">Всё хранится только в этом браузере. Чтобы открыть на другом устройстве, передайте ссылкой или файлом.</p>
+      <div class="bar">
+        <button class="main" id="mkLink">Ссылка с данными</button>
+        <button class="ghost" id="exp">Сохранить файл</button>
+        <label class="btn ghost">Открыть файл <input type="file" id="impFile" accept=".json,application/json" hidden></label>
+      </div>
+      <p class="muted small" id="linkInfo"></p>
+      <div class="bar"><button class="link" id="reset">начать с чистого листа</button><button class="link" id="demo">вернуть пример</button></div>
+    </div>`;
+
+  $('#round').value = db.round;
+  $('#org').oninput = e => { db.org = e.target.value; save(); syncHeader(); };
+  $('#target').onchange = e => { const v = parseNum(e.target.value); if (v >= 5 && v <= 90) { db.target = v; save(); } else e.target.value = db.target; };
+  $('#round').onchange = e => { db.round = e.target.value; save(); };
+
+  const pts = $('#pts');
+  pts.onchange = e => { const tr = e.target.closest('tr'); if (!tr) return; const p = db.points.find(x => x.id === tr.dataset.id); p.name = e.target.value.trim() || 'Точка'; save(); syncPoint(); };
+  pts.onclick = e => {
+    const b = e.target.closest('[data-del]'); if (!b) return;
+    const id = b.closest('tr').dataset.id, p = db.points.find(x => x.id === id), snap = JSON.stringify(db);
+    db.points = db.points.filter(x => x.id !== id); if (db.cur === id) db.cur = db.points[0].id;
+    save(); syncPoint(); keepScroll(() => renderSettings());
+    note(`Точка «${esc(p.name)}» удалена вместе с её продажами и остатками.`, [['Ок', () => {}], ['Вернуть', () => { db = JSON.parse(snap); save(); syncPoint(); renderSettings(); }]]);
+  };
+  $('#addPt').onclick = () => {
+    const p = newPoint('Точка ' + (db.points.length + 1));
+    if ($('#copyPt').checked) { const c = JSON.parse(JSON.stringify(P())); Object.assign(p, { fixed: c.fixed, channels: c.channels, pay: c.pay, delivery: c.delivery, tax: c.tax, plan: c.plan }); }
+    db.points.push(p); db.cur = p.id; save(); syncPoint(); keepScroll(() => renderSettings());
+    const ins = view.querySelectorAll('#pts input'); ins[ins.length - 1].select();
+  };
+
+  const readFile = (file, cb) => {
+    const r = new FileReader();
+    r.onload = () => { try { cb(JSON.parse(r.result)); } catch (err) { note('Не получилось прочитать файл: ' + esc(err.message)); } };
+    r.readAsText(file);
+  };
+  const run = (items, opt = {}, snap = JSON.stringify(db)) => {
+    let r; try { r = importMenu(items, opt); } catch (err) { note(esc(err.message)); return; }
+    renderSettings(`<div class="report"><b>Готово.</b> Новых позиций: ${r.added}, обновлено: ${r.updated}. Наборов собрано: ${r.sets}, блюд в них узнано: ${r.found}.
+      ${r.missing.length ? `<br>В наборах есть блюда, которых нет в меню. Обычно это роллы только для наборов или опечатка в названии: <ul>${r.missing.slice(0, 15).map(m => `<li>${esc(m)}</li>`).join('')}</ul>${r.missing.length > 15 ? `<span class="muted">и ещё ${r.missing.length - 15}</span>` : ''}` : ''}
+      <div class="bar"><a class="btn ghost" href="#menu">К меню</a>${r.missing.length ? `<button class="main" id="mkMissing">Завести их как блюда (${r.missing.length})</button>` : ''}<button class="link" id="undoImp">отменить импорт</button></div></div>`);
+    $('#undoImp').onclick = () => { db = JSON.parse(snap); save(); renderSettings(); };
+    const mk = $('#mkMissing'); if (mk) mk.onclick = () => { db = JSON.parse(snap); run(items, { createMissing: true }, snap); };
+  };
+  $('#menuFile').onchange = e => e.target.files[0] && readFile(e.target.files[0], items => run(items));
+  const drop = $('#drop');
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('on'); };
+  drop.ondragleave = () => drop.classList.remove('on');
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove('on'); const f = e.dataTransfer.files[0]; if (f) readFile(f, items => run(items)); };
+
+  $('#mkLink').onclick = async e => {
+    if (!('CompressionStream' in window)) { $('#linkInfo').textContent = 'Этот браузер не умеет сжимать данные. Сохраните файл.'; return; }
+    const link = await packLink();
+    $('#linkInfo').textContent = `Длина ссылки ${link.length.toLocaleString('ru-RU')} знаков.` + (link.length > 60000 ? ' Это много, мессенджер может её обрезать, надёжнее файлом.' : '');
+    copyText(link, e.target);
+  };
+  $('#exp').onclick = () => download(`fudkost-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(db, null, 1));
+  $('#impFile').onchange = e => {
+    const f = e.target.files[0]; if (!f) return;
+    readFile(f, data => {
+      if (!data || !Array.isArray(data.ing) || !Array.isArray(data.dishes)) { note('Это не файл Фудкоста. Меню сайта загружайте в блок «Меню с сайта».'); return; }
+      const snap = JSON.stringify(db);
+      db = migrate(data); save(); syncHeader(); route();
+      note(`Открыт файл «${esc(f.name)}»: ${db.dishes.length} блюд, ${db.ing.length} продуктов, ${db.points.length} ${plural(db.points.length, 'точка', 'точки', 'точек')}.`, [['Ок', () => {}], ['Вернуть как было', () => { db = JSON.parse(snap); save(); syncHeader(); route(); }]]);
+    });
+  };
+  const replace = (fresh, msg) => {
+    const snap = JSON.stringify(db); db = fresh; save(); syncHeader(); location.hash = '#menu'; route();
+    note(msg, [['Ок', () => {}], ['Отменить', () => { db = JSON.parse(snap); save(); syncHeader(); route(); }]]);
+  };
+  $('#reset').onclick = () => replace(migrate({ org: db.org, target: db.target, round: db.round, ing: [], dishes: [] }), 'Данные очищены.');
+  $('#demo').onclick = () => replace(demo(), 'Загружен пример.');
+}
+
+/* ---------- передача ссылкой: вся база сжимается в адрес ---------- */
 async function packLink() {
-  const json = JSON.stringify(db);
-  const buf = await new Response(new Blob([json]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer();
+  const buf = await new Response(new Blob([JSON.stringify(db)]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer();
   let bin = ''; const u8 = new Uint8Array(buf);
   for (let i = 0; i < u8.length; i += 8192) bin += String.fromCharCode(...u8.subarray(i, i + 8192));
   return location.href.split('#')[0] + '#share=' + btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 async function unpackLink(s) {
-  const stream = new Blob([unb64u(s)]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-  return JSON.parse(await new Response(stream).text());
+  const bytes = Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+  return JSON.parse(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text());
 }
-
-/* ---------- навигация ---------- */
-function route(keepScroll) {
-  const h = location.hash.slice(1) || 'menu';
-  const [tab, id] = h.split('/');
-  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('on', a.dataset.tab === (tab === 'dish' ? 'menu' : tab)));
-  if (tab === 'dish') renderDish(id);
-  else if (tab === 'products') renderProducts();
-  else if (tab === 'data') renderData();
-  else if (tab === 'sales') renderSales();
-  else if (tab === 'analysis') renderAnalysis();
-  else if (tab === 'check') renderCheck();
-  else if (tab === 'buy') renderBuy();
-  else renderMenu();
-  if (keepScroll !== true) scrollTo(0, 0);
-}
-addEventListener('hashchange', () => location.hash.startsWith('#share=') ? takeShare() : route());
-const rs = $('#round');
-rs.value = db.round;
-rs.onchange = () => { db.round = rs.value; save(); route(true); };
-const t = $('#target');
-t.value = db.target;
-t.oninput = () => { const v = parseNum(t.value); if (v >= 5 && v <= 90) { db.target = v; save(); route(true); t.focus(); } };
 function takeShare() {
   const code = location.hash.slice(7);
   history.replaceState(null, '', location.pathname + location.search + '#menu');
   route();
-  if (!('DecompressionStream' in window)) note('Этот браузер слишком старый, чтобы открыть ссылку с данными. Попробуйте свежий Chrome, Яндекс Браузер или Safari.');
-  else unpackLink(code).then(data => {
+  if (!('DecompressionStream' in window)) { note('Этот браузер слишком старый, чтобы открыть ссылку с данными. Попробуйте свежий Chrome, Яндекс Браузер или Safari.'); return; }
+  unpackLink(code).then(data => {
     if (!data || !Array.isArray(data.dishes)) throw new Error('пусто');
-    note(`По ссылке пришли данные: ${data.dishes.length} блюд, ${data.ing.length} продуктов. Открыть их вместо ваших?`, [
-      ['Открыть', () => { const snap = JSON.stringify(db); db = migrate(data); db.demo = false; save(); rs.value = db.round; t.value = db.target; route();
-        note('Открыто. Ваши прежние данные можно вернуть.', [['Ок', () => {}], ['Вернуть мои', () => { db = JSON.parse(snap); save(); rs.value = db.round; t.value = db.target; route(); }]]); }],
+    note(`По ссылке пришли данные${data.org ? ` «${esc(data.org)}»` : ''}: ${data.dishes.length} блюд, ${data.ing.length} продуктов. Открыть их вместо ваших?`, [
+      ['Открыть', () => { const snap = JSON.stringify(db); db = migrate(data); db.demo = false; save(); syncHeader(); route();
+        note('Открыто. Ваши прежние данные можно вернуть.', [['Ок', () => {}], ['Вернуть мои', () => { db = JSON.parse(snap); save(); syncHeader(); route(); }]]); }],
       ['Не надо', () => {}]]);
   }).catch(() => note('Ссылка повреждена: скорее всего, она обрезалась при пересылке.'));
 }
+
+/* =========================================================================
+   Шапка и навигация
+   ========================================================================= */
+function syncPoint() {
+  const sel = $('#point');
+  sel.innerHTML = db.points.map(p => `<option value="${p.id}"${p.id === db.cur ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
+  $('#pointWrap').hidden = db.points.length < 2;
+}
+function syncHeader() {
+  $('#orgName').textContent = db.org || '';
+  syncPoint();
+}
+$('#point').onchange = e => { db.cur = e.target.value; save(); route(true); };
+
+const TABS = { menu: renderMenu, products: renderProducts, sales: renderSales, analysis: renderAnalysis, check: renderCheck, buy: renderBuy, costs: renderCosts, settings: renderSettings };
+function route(keep) {
+  let [tab, id] = (location.hash.slice(1) || 'menu').split('/');
+  if (tab === 'data') tab = 'settings';
+  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('on', a.dataset.tab === (tab === 'dish' ? 'menu' : tab)));
+  if (tab === 'dish') renderDish(id);
+  else (TABS[tab] || renderMenu)();
+  if (keep !== true) scrollTo(0, 0);
+}
+addEventListener('hashchange', () => location.hash.startsWith('#share=') ? takeShare() : route());
+syncHeader();
 if (location.hash.startsWith('#share=')) takeShare(); else route();
 
+if (TEST) window.__fk = { get db() { return db; }, set db(v) { db = v; }, stats, econ, rates, cost, unitPrice, usage, importMenu, migrate, roundPrice, P };
 })();
