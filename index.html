@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Фудкост — себестоимость меню</title>
-<meta name="description" content="Считает себестоимость роллов, сетов и пиццы по закупочным ценам и показывает, что пересчитать после подорожания.">
+<meta name="description" content="Себестоимость, меню-инжиниринг, сверка расхода и закупка для доставки суши. Работает в браузере, без регистрации.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;700&display=swap">
@@ -16,9 +16,16 @@
   <nav>
     <a href="#menu" data-tab="menu">Меню</a>
     <a href="#products" data-tab="products">Продукты</a>
-    <a href="#data" data-tab="data">Импорт и файлы</a>
+    <a href="#sales" data-tab="sales">Продажи</a>
+    <a href="#analysis" data-tab="analysis">Анализ</a>
+    <a href="#check" data-tab="check">Сверка</a>
+    <a href="#buy" data-tab="buy">Закупка</a>
+    <a href="#data" data-tab="data">Файлы</a>
   </nav>
-  <label class="target">цель фудкоста <input id="target" type="number" min="5" max="90" step="1"> %</label>
+  <div class="target">
+    <label>цель фудкоста <input id="target" type="number" min="5" max="90" step="1"> %</label>
+    <label>цены <select id="round"><option value="10">до 10 ₽</option><option value="90">на 90: 490, 590</option><option value="50">до 50 ₽</option></select></label>
+  </div>
 </header>
 <div id="notice" hidden></div>
 <main id="view"></main>
