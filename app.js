@@ -18,13 +18,16 @@ function newPoint(name) {
   return {
     id: uid(), name,
     sales: { days: 30, qty: {} },
-    stock: {},                                    // продукт → { start, in, out, end, now }
     fixed: [],                                    // постоянные расходы в месяц
     channels: [],                                 // агрегаторы: { name, share %, fee % }
     pay: { share: 0, fee: 0 },                    // оплата картой и СБП: доля %, комиссия %
     delivery: { check: 0, share: 0, cost: 0 },    // средний чек, доля заказов с доставкой %, цена одной доставки
-    tax: { mode: 'none', rate: 6, reduce: 0, fixed: 0, vat: 0 },
-    plan: { days: 7, reserve: 10 }
+    tax: { mode: 'none', rate: 6, reduce: 0, fixed: 0, vat: 0, entity: 'ip' },
+    plan: { days: 7, reserve: 10 },
+    moves: [],                                    // склад: приходы, списания, продажи, инвентаризации
+    shifts: [],                                   // кассовые смены
+    staff: [],                                    // сотрудники и условия оплаты
+    paid: []                                      // выплаты зарплаты
   };
 }
 
@@ -56,8 +59,7 @@ function demo() {
   const qtys = obj => { const q = {}; for (const k in obj) q[n(k)] = obj[k]; return q; };
   const a = newPoint('Центр');
   a.sales.qty = qtys({ 'Филадельфия': 240, 'Калифорния': 180, 'Каппа-маки': 60, 'Сяке-маки': 90, 'Унаги-маки': 35, 'Запечённый с крабом': 150, 'Сет «Классика»': 70 });
-  a.stock = { [by('Лосось')]: { start: 6, in: 30, out: 0.8, end: 4.3 }, [by('Сыр сливочный')]: { start: 4, in: 16, end: 1.6 } };
-  a.fixed = [{ name: 'Аренда', sum: 45000 }, { name: 'Зарплата повара и курьера с взносами', sum: 120000 }, { name: 'Реклама ВКонтакте', sum: 10000 }, { name: 'Свет, вода, интернет', sum: 8000 }];
+  a.fixed = [{ name: 'Аренда', sum: 45000, day: 5 }, { name: 'Зарплата повара и курьера с взносами', sum: 120000, day: 0 }, { name: 'Реклама ВКонтакте', sum: 10000, day: 1 }, { name: 'Свет, вода, интернет', sum: 8000, day: 20 }];
   a.channels = [{ name: 'Агрегатор', share: 30, fee: 25 }];
   a.pay = { share: 70, fee: 2 };
   a.delivery = { check: 1300, share: 60, cost: 0 };
@@ -70,7 +72,48 @@ function demo() {
   b.delivery = { check: 1200, share: 80, cost: 120 };
   b.tax = { mode: 'usn6', rate: 6, reduce: 8000, fixed: 0, vat: 0 };
 
-  return migrate({ v: 3, org: 'Ролл-бар (пример)', target: 35, round: '10', ing, dishes, points: [a, b], cur: a.id, demo: true });
+  // склад и смены «Центра»: месяц назад пересчитали, потом закупки, списание, продажи и сегодняшняя инвентаризация
+  for (const k of ['Лосось', 'Сыр сливочный', 'Угорь', 'Икра тобико']) ing.find(i => i.name.startsWith(k)).ctrl = 'vsd';
+  const today = new Date(), dd = k => { const t = new Date(today); t.setDate(t.getDate() - k); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; };
+  const L = (n, qty, sum) => ({ ing: by(n), qty, sum });
+  let tt = 1;
+  const mv = (k, type, lines, extra = {}) => Object.assign({ id: uid(), t: tt++, date: dd(k), type, lines }, extra);
+  a.moves = [
+    mv(30, 'inv', [L('Лосось', 6), L('Сыр сливочный', 4), L('Рис для суши', 10), L('Нори', 200)].map(l => ({ ...l, expected: l.qty }))),
+    mv(24, 'in', [L('Лосось', 10, 21000), L('Сыр сливочный', 8, 9200), L('Рис для суши', 25, 5250)], { supplier: 'Рыбный двор' }),
+    mv(14, 'in', [L('Лосось', 10, 21000), L('Нори', 300, 4140)], { supplier: 'Рыбный двор' }),
+    mv(7, 'in', [L('Лосось', 10, 22000), L('Сыр сливочный', 8, 9200), L('Рис для суши', 15, 3150)], { supplier: 'Рыбный двор' }),
+    mv(9, 'out', [L('Лосось', 0.8)], { reason: 'Истёк срок' }),
+  ];
+  const sale = { id: uid(), t: tt++, date: dd(1), type: 'sale', lines: [], note: 'Продажи за месяц (пример)' };
+  a.moves.push(sale);
+  a.staff = [
+    { id: uid(), name: 'Айгуль', role: 'Сушист', kind: 'work', rate: 2500, pct: 0, perOrder: 0 },
+    { id: uid(), name: 'Рустам', role: 'Оператор', kind: 'work', rate: 1500, pct: 1, perOrder: 0 },
+    { id: uid(), name: 'Ильдар', role: 'Курьер', kind: 'self', rate: 0, pct: 0, perOrder: 150 }
+  ];
+  const sh = [[6, 11800, 3], [5, 12900, 5], [4, 14200, 6], [3, 16800, 8], [2, 15100, 7], [1, 12300, 4], [0, 13500, 5]];
+  a.shifts = sh.map(([k, rev, orders], j) => ({ id: uid(), date: dd(k), cash: Math.round(rev * .25), card: Math.round(rev * .45), sbp: Math.round(rev * .2), online: rev - Math.round(rev * .25) - Math.round(rev * .45) - Math.round(rev * .2),
+    start: 2000, withdrawn: j % 3 === 2 ? 5000 : 0, counted: undefined, exp: j === 3 ? [{ name: 'Пакеты и салфетки', sum: 640 }] : [],
+    staff: a.staff.map(st => ({ id: st.id, orders: st.role === 'Курьер' ? orders : 0 })), dishes: {} }));
+  a.shifts.forEach((x, j) => { x.counted = Math.max(0, x.start + x.cash - (x.exp[0] ? x.exp[0].sum : 0) - x.withdrawn - (j === 4 ? 300 : 0)); });
+
+  const out = migrate({ v: 3, org: 'Ролл-бар (пример)', target: 35, round: '10', ing, dishes, points: [a, b], cur: a.id, demo: true });
+  // расход по техкартам за месяц и сегодняшний пересчёт
+  const keepDb = db; db = out;
+  sale.lines = salesToLines(a.sales.qty);
+  // стартовый пересчёт по всем продуктам: на месяц с небольшим запасом, кроме тех, что пришли по накладным
+  const first = a.moves[0], got = new Set(a.moves.filter(m => m.type === 'in').flatMap(m => m.lines.map(l => l.ing)));
+  for (const l of sale.lines) if (!got.has(l.ing) && !first.lines.some(x => x.ing === l.ing)) {
+    const i = ing.find(x => x.id === l.ing), q = i.unit === 'шт' ? Math.ceil(l.qty * 1.25) : Math.ceil(l.qty * 1.25 * 10) / 10;
+    first.lines.push({ ing: l.ing, qty: q, expected: q });
+  }
+  const inv = mv(0, 'inv', [L('Лосось', 4.3), L('Сыр сливочный', 1.6), L('Рис для суши', 8.5), L('Нори', 52)]);
+  const before = balances(a, mkey(inv)).bal;
+  inv.lines.forEach(l => l.expected = Math.round((before.get(l.ing) || 0) * 1000) / 1000);
+  a.moves.push(inv);
+  db = keepDb;
+  return out;
 }
 
 // старые сохранения (без точек, с категориями) поднимаются до текущей версии
@@ -79,7 +122,7 @@ function migrate(d) {
   d.round = d.round || '10';
   d.org = d.org || '';
   d.ing = d.ing || []; d.dishes = d.dishes || [];
-  d.ing.forEach(i => { i.hist = i.hist || []; i.waste = +i.waste || 0; });
+  d.ing.forEach(i => { i.hist = i.hist || []; i.waste = +i.waste || 0; i.ctrl = i.ctrl || ''; });
   d.dishes.forEach(x => {
     if (x.category === 'Роллы только в сетах') x.setOnly = true;
     delete x.category;
@@ -100,16 +143,26 @@ function migrate(d) {
     sales: Object.assign({ days: 30, qty: {} }, p.sales),
     pay: Object.assign({ share: 0, fee: 0 }, p.pay),
     delivery: Object.assign({ check: 0, share: 0, cost: 0 }, p.delivery),
-    tax: Object.assign({ mode: 'none', rate: 6, reduce: 0, fixed: 0, vat: 0 }, p.tax),
-    plan: Object.assign({ days: 7, reserve: 10 }, p.plan)
+    tax: Object.assign({ mode: 'none', rate: 6, reduce: 0, fixed: 0, vat: 0, entity: 'ip' }, p.tax),
+    plan: Object.assign({ days: 7, reserve: 10 }, p.plan),
+    moves: p.moves || [], shifts: p.shifts || [], staff: p.staff || [], paid: p.paid || []
   }));
+  // остатки из старой «Сверки» становятся первой инвентаризацией
+  for (const p of d.points) {
+    if (p.stock) {
+      const lines = Object.entries(p.stock).filter(([, v]) => v && (v.now !== undefined || v.end !== undefined))
+        .map(([ing, v]) => ({ ing, qty: +(v.now !== undefined ? v.now : v.end) || 0, expected: +(v.now !== undefined ? v.now : v.end) || 0 }));
+      if (lines.length && !p.moves.length) { const t = new Date(); p.moves.push({ id: uid(), t: Date.now(), date: `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`, type: 'inv', lines }); }
+      delete p.stock;
+    }
+    p.fixed.forEach(f => { f.day = +f.day || 0; });
+  }
   if (!d.points.some(p => p.id === d.cur)) d.cur = d.points[0].id;
   d.v = 3;
   return d;
 }
 
-let db;
-try { db = JSON.parse(localStorage.getItem(KEY)); db = db ? migrate(db) : demo(); } catch (e) { db = demo(); }
+let db = null; // загружается в самом конце, когда все функции объявлены
 let saveFail = false;
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(db)); saveFail = false; }
@@ -504,7 +557,7 @@ function renderProducts() {
     <p class="lead">Цена как в накладной: за упаковку. Общие для всех точек.</p>
     <div class="card">
       <div class="tw"><table class="edit">
-        <thead><tr><th>Продукт</th><th class="r">Упаковка</th><th></th><th class="r">Цена, ₽</th><th class="r">Отход, %</th><th class="r">Цена нетто</th><th class="r hide-m">За полгода</th><th class="r hide-m">Блюд</th><th></th></tr></thead>
+        <thead><tr><th>Продукт</th><th class="r">Упаковка</th><th></th><th class="r">Цена, ₽</th><th class="r">Отход, %</th><th class="r">Цена нетто</th><th class="r hide-m">За полгода</th><th class="hide-m">Учёт</th><th class="r hide-m">Блюд</th><th></th></tr></thead>
         <tbody id="ings">${sorted.map(i => `<tr data-id="${i.id}">
           <td><input data-f="name" value="${esc(i.name)}" placeholder="Название"></td>
           <td class="r"><input class="n s" data-f="qty" inputmode="decimal" value="${num(i.qty)}"></td>
@@ -513,9 +566,11 @@ function renderProducts() {
           <td class="r"><input class="n s" data-f="waste" inputmode="decimal" value="${num(i.waste || 0)}"></td>
           <td class="r" data-net>${net(i)}</td>
           <td class="r hide-m" data-hist>${histCell(i)}</td>
+          <td class="hide-m"><select data-f="ctrl">${Object.entries(CTRL).map(([k, n]) => `<option value="${k}"${k === (i.ctrl || '') ? ' selected' : ''}>${n}</option>`).join('')}</select></td>
           <td class="r muted hide-m">${db.dishes.filter(d => usesIng(d, i.id)).length || ''}</td>
           <td><button class="del" data-del>убрать</button></td></tr>`).join('') || '<tr><td colspan="9" class="muted">Продуктов пока нет.</td></tr>'}</tbody>
       </table></div>
+      <p class="small muted">«Учёт» подсказывает при приходе: «Меркурий» — для мяса, рыбы, молочки, яиц (нужно гасить ВСД), «Честный знак» — для маркированной воды, молочки, пива и других товаров с кодами.</p>
       <p class="small muted">Отход — сколько процентов веса уходит при чистке и разделке. Он зависит от того, что вы покупаете: целая рыба и готовое филе дают очень разный отход. Точнее всего взвесить один раз: (вес до обработки − вес после) / вес до × 100.</p>
     </div>`;
 
@@ -530,7 +585,7 @@ function renderProducts() {
   tb.oninput = tb.onchange = e => {
     const tr = e.target.closest('tr[data-id]'), f = e.target.dataset.f; if (!tr || !f) return;
     const i = ingById(tr.dataset.id);
-    i[f] = (f === 'name' || f === 'unit') ? e.target.value : parseNum(e.target.value);
+    i[f] = (f === 'name' || f === 'unit' || f === 'ctrl') ? e.target.value : parseNum(e.target.value);
     tr.querySelector('[data-net]').textContent = net(i);
     save();
   };
@@ -549,7 +604,7 @@ function renderProducts() {
     const users = db.dishes.filter(d => d.parts.some(p => p.ing === id));
     if (users.length) { note(`«${esc(i.name)}» есть в составе: ${users.slice(0, 10).map(d => `<a href="#dish/${d.id}">${esc(d.name)}</a>`).join(', ')}${users.length > 10 ? '…' : ''}. Уберите его оттуда, потом удалите.`); return; }
     db.ing = db.ing.filter(x => x.id !== id);
-    for (const p of db.points) delete p.stock[id];
+    for (const p of db.points) if (p.moves.some(m => m.lines.some(l => l.ing === id))) { note(`«${esc(i.name)}» есть в складском журнале точки «${esc(p.name)}». Удалить его нельзя, переименуйте или оставьте.`); return; }
     save(); keepScroll(renderProducts);
   };
   $('#addIng').onclick = () => {
@@ -587,7 +642,8 @@ function renderSales(report) {
     <p class="lead">Точка «${esc(pt.name)}». Сколько порций продано за период: отсюда считаются анализ, сверка и закупка.</p>
     <div class="card">
       <div class="bar"><label>Период, дней <input id="days" type="number" min="1" max="366" value="${pt.sales.days}" class="s"></label>
-        <span class="muted">Итого <b id="tot">${total}</b> порций на <b id="rev">${rub(revenue)}</b></span></div>
+        <span class="muted">Итого <b id="tot">${total}</b> порций на <b id="rev">${rub(revenue)}</b></span>
+        ${pt.shifts.some(s => s.dishes && Object.keys(s.dishes).length) ? '<span class="grow"></span><button class="ghost" id="fromShifts">Взять из смен за этот период</button>' : ''}</div>
     </div>
     <div class="card">
       <h2>Вставить из кассы или Excel</h2>
@@ -604,6 +660,14 @@ function renderSales(report) {
         <td class="r muted hide-m">${qtyOf(d, pt) && d.price ? rub(qtyOf(d, pt) * d.price) : ''}</td></tr>`).join('')}</tbody></table></div>
     </div>`;
 
+  const fs = $('#fromShifts');
+  if (fs) fs.onclick = () => {
+    const from = addDays(isoDay(), -(+pt.sales.days || 30) + 1), snap = JSON.stringify(pt.sales.qty), q = {};
+    let n = 0;
+    for (const s of pt.shifts) if (s.date >= from && s.dishes) { n++; for (const id in s.dishes) q[id] = (q[id] || 0) + (+s.dishes[id] || 0); }
+    pt.sales.qty = q; save(); renderSales();
+    note(`Продажи собраны из ${n} ${plural(n, 'смены', 'смен', 'смен')} с ${fmtDay(from)}.`, [['Ок', () => {}], ['Вернуть как было', () => { pt.sales.qty = JSON.parse(snap); save(); renderSales(); }]]);
+  };
   $('#days').oninput = e => { const v = Math.round(parseNum(e.target.value)); if (v >= 1 && v <= 366) { pt.sales.days = v; save(); } };
   $('#sq').oninput = e => { salesQ = e.target.value; renderSales(); refocus('#sq'); };
   $('#srows').oninput = e => {
@@ -836,12 +900,13 @@ function renderCosts() {
 
     <div class="card">
       <h2>Постоянные расходы в месяц</h2>
-      <div class="tw"><table class="edit"><tbody id="fixed">${pt.fixed.map((f, k) => `<tr data-k="${k}">
+      <div class="tw"><table class="edit"><thead><tr><th>Статья</th><th class="r">В месяц</th><th class="r">День оплаты</th><th></th></tr></thead><tbody id="fixed">${pt.fixed.map((f, k) => `<tr data-k="${k}">
         <td><input data-f="name" value="${esc(f.name)}" placeholder="Например, аренда"></td><td class="r"><input class="n" data-f="sum" inputmode="numeric" value="${+f.sum || ''}"><span class="unit">₽</span></td>
+        <td class="r"><input class="n s" data-f="day" inputmode="numeric" value="${+f.day || ''}" placeholder="—"><span class="unit hide-m">число</span></td>
         <td><button class="del" data-del>убрать</button></td></tr>`).join('') || '<tr><td class="muted">Пока пусто.</td></tr>'}</tbody>
-        <tfoot><tr class="total"><td>Итого</td><td class="r">${rub(fixedSum)}</td><td></td></tr></tfoot></table></div>
+        <tfoot><tr class="total"><td>Итого</td><td class="r">${rub(fixedSum)}</td><td></td><td></td></tr></tfoot></table></div>
       <div class="bar"><button class="ghost" id="addFixed">Добавить расход</button></div>
-      <p class="small muted">Аренда, зарплаты вместе со страховыми взносами, реклама, коммунальные, связь, программы (касса, сайт), вывоз мусора. Всё, что платится, даже если заказов нет.</p>
+      <p class="small muted">Аренда, зарплаты вместе со страховыми взносами, реклама, коммунальные, связь, программы (касса, сайт), вывоз мусора. Всё, что платится, даже если заказов нет. По дню оплаты платёж попадёт в календарь во вкладке «Деньги».</p>
     </div>
 
     <div class="card">
@@ -869,6 +934,7 @@ function renderCosts() {
     <div class="card">
       <h2>Налоги</h2>
       <div class="grid">
+        <label class="fld">Кто вы<span class="inp"><select id="taxEntity"><option value="ip">ИП</option><option value="org">Организация (ООО)</option></select></span><span class="hint">от этого зависят сроки налогов и взносы ИП за себя</span></label>
         <label class="fld">Режим<span class="inp"><select id="taxMode">
           <option value="none">Не учитывать</option><option value="usn6">УСН «Доходы»</option><option value="usn15">УСН «Доходы минус расходы»</option><option value="fixed">Патент или другая сумма в месяц</option>
         </select></span></label>
@@ -882,6 +948,7 @@ function renderCosts() {
     </div>`;
 
   $('#taxMode').value = t.mode;
+  $('#taxEntity').value = t.entity || 'ip';
   const tv = $('#taxVat'); if (tv) tv.value = String(+t.vat || 0);
   const upd = (id, fn) => { const el = $('#' + id); if (el) el.onchange = ev => { fn(ev.target.value); save(); keepScroll(renderCosts); }; };
   upd('payShare', v => pt.pay.share = Math.min(100, parseNum(v)));
@@ -894,85 +961,425 @@ function renderCosts() {
   upd('taxReduce', v => t.reduce = parseNum(v));
   upd('taxFixed', v => t.fixed = parseNum(v));
   upd('taxVat', v => t.vat = +v);
+  upd('taxEntity', v => t.entity = v);
 
   const table = (sel, arr, mk) => {
     const tb = $(sel);
     tb.onchange = ev => {
       const tr = ev.target.closest('tr[data-k]'), f = ev.target.dataset.f; if (!tr || !f) return;
-      arr[+tr.dataset.k][f] = f === 'name' ? ev.target.value : parseNum(ev.target.value);
+      arr[+tr.dataset.k][f] = f === 'name' ? ev.target.value : f === 'day' ? Math.min(31, Math.max(0, Math.round(parseNum(ev.target.value)))) : parseNum(ev.target.value);
       save(); keepScroll(renderCosts);
       if (f === 'share' && arr.reduce((a, c) => a + (+c.share || 0), 0) > 100) note('Сумма долей заказов агрегаторов больше 100%. Проверьте цифры.');
     };
     tb.onclick = ev => { const b = ev.target.closest('[data-del]'); if (!b) return; arr.splice(+b.closest('tr').dataset.k, 1); save(); keepScroll(renderCosts); };
     return () => { arr.push(mk()); save(); keepScroll(renderCosts); const ins = view.querySelectorAll(sel + ' input[data-f="name"]'); ins[ins.length - 1].focus(); };
   };
-  $('#addFixed').onclick = table('#fixed', pt.fixed, () => ({ name: '', sum: 0 }));
+  $('#addFixed').onclick = table('#fixed', pt.fixed, () => ({ name: '', sum: 0, day: 0 }));
   $('#addCh').onclick = table('#chs', pt.channels, () => ({ name: '', share: 0, fee: 0 }));
 }
 
 /* =========================================================================
-   Сверка: по техкартам и по факту
+   Даты
    ========================================================================= */
-function renderCheck() {
+const pad = n => String(n).padStart(2, '0');
+const isoDay = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const dayOf = s => { const [y, m, d] = String(s).split('-').map(Number); return new Date(y, m - 1, d || 1); };
+const fmtDay = s => dayOf(s).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+const addDays = (s, n) => { const d = dayOf(s); d.setDate(d.getDate() + n); return isoDay(d); };
+const mkey = m => `${m.date}|${String(m.t || 0).padStart(15, '0')}`;
+const CTRL = { '': 'обычный', vsd: 'Меркурий', mark: 'Честный знак' };
+
+/* =========================================================================
+   Склад: движения продуктов
+   in — приход по накладной (qty в кг / л / шт, sum ₽)
+   out — списание по акту (reason)
+   sale — расход по продажам смены, посчитан по техкартам на момент продажи
+   inv — инвентаризация: пересчитанный остаток (expected — сколько ожидалось)
+   ========================================================================= */
+function balances(pt, untilKey = null) {
+  const bal = new Map(), lastInv = new Map();
+  const moves = pt.moves.filter(m => !untilKey || mkey(m) < untilKey).sort((a, b) => mkey(a) < mkey(b) ? -1 : 1);
+  for (const m of moves) for (const l of m.lines) {
+    const v = +l.qty || 0;
+    if (m.type === 'inv') { bal.set(l.ing, v); lastInv.set(l.ing, m.date); }
+    else if (m.type === 'in') bal.set(l.ing, (bal.get(l.ing) || 0) + v);
+    else bal.set(l.ing, (bal.get(l.ing) || 0) - v);
+  }
+  return { bal, lastInv };
+}
+// расход продуктов на проданные блюда: { ing: qty в кг / л / шт }
+function salesToLines(qtyMap) {
+  const u = new Map();
+  for (const id in qtyMap) { const d = dishById(id); if (d && +qtyMap[id]) usage(d, +qtyMap[id], u); }
+  return [...u].map(([ing, g]) => { const i = ingById(ing); return { ing, qty: Math.round(toUnit(g, i) * 1000) / 1000 }; }).filter(l => l.qty > 0);
+}
+const lineMoney = (m, l) => m.type === 'in' ? +l.sum || 0 : (+l.qty || 0) * packOf(ingById(l.ing) || {});
+const REASONS = ['Испортилось', 'Истёк срок', 'Брак поставщика', 'Проработка и пробы', 'Питание персонала', 'Другое'];
+
+let stockForm = null; // 'in' | 'out' | 'inv' | null
+function renderStock() {
   const pt = P();
-  if (!db.dishes.some(d => qtyOf(d, pt))) { view.innerHTML = '<div class="head"><h1>Сверка</h1></div>' + noSales(); return; }
+  const { bal, lastInv } = balances(pt);
+  const perDay = new Map();
   const u = salesUsage(pt);
-  const ings = db.ing.filter(i => u.get(i.id) > 0 || pt.stock[i.id])
-    .sort((a, b) => toUnit(u.get(b.id) || 0, b) * packOf(b) - toUnit(u.get(a.id) || 0, a) * packOf(a));
-  const st = id => pt.stock[id] || {};
-  const has = v => v !== undefined && v !== '';
-  const calc = i => {
-    const s = st(i.id), theory = toUnit(u.get(i.id) || 0, i);
-    const filled = has(s.start) || has(s.in) || has(s.end);
-    const fact = filled ? (+s.start || 0) + (+s.in || 0) - (+s.end || 0) : NaN;
-    const out = +s.out || 0;
-    const lost = fact - out - theory;                 // то, что не объяснено ни продажами, ни списаниями
-    return { theory, fact, out, lost, money: lost * packOf(i), outMoney: out * packOf(i), filled };
-  };
-  let rev = 0, food = 0;
-  for (const d of db.dishes) { const q = qtyOf(d, pt); if (q && !stats(d, pt).blank) { rev += q * d.price; food += q * cost(d); } }
+  for (const [id, g] of u) perDay.set(id, toUnit(g, ingById(id)) / (+pt.sales.days || 30));
+  const ings = db.ing.slice().sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  const tracked = ings.filter(i => bal.has(i.id) || perDay.has(i.id));
+  const worth = tracked.reduce((a, i) => a + Math.max(0, bal.get(i.id) || 0) * packOf(i), 0);
+  const lastInvMove = pt.moves.filter(m => m.type === 'inv').sort((a, b) => mkey(b) < mkey(a) ? -1 : 1)[0];
+  const invLoss = lastInvMove ? lastInvMove.lines.reduce((a, l) => a + ((+l.expected || 0) - (+l.qty || 0)) * packOf(ingById(l.ing) || {}), 0) : 0;
+  const month = isoDay().slice(0, 7);
+  const outMonth = pt.moves.filter(m => m.type === 'out' && m.date.startsWith(month)).reduce((a, m) => a + m.lines.reduce((s, l) => s + lineMoney(m, l), 0), 0);
+  const recent = pt.moves.slice().sort((a, b) => mkey(b) < mkey(a) ? -1 : 1).slice(0, 40);
 
   view.innerHTML = `
-    <div class="head"><h1>Сверка</h1></div>
-    <p class="lead">Точка «${esc(pt.name)}» за ${days(pt.sales.days)}. Сколько продуктов должно было уйти по техкартам на продажи и сколько ушло на самом деле по остаткам.</p>
-    <div id="chSum"></div>
+    <div class="head"><h1>Склад</h1>
+      <div class="bar tight"><button class="main" data-form="in">Приход</button><button class="ghost" data-form="out">Списание</button><button class="ghost" data-form="inv">Инвентаризация</button></div></div>
+    <p class="lead">Точка «${esc(pt.name)}». Остаток считается сам: последняя инвентаризация плюс приходы минус списания и продажи по техкартам. Продажи списываются при закрытии смены во вкладке «Деньги».</p>
+    <div id="form"></div>
+    <div class="facts">
+      <div class="fact"><span>На складе</span><b>${rub(worth)}</b></div>
+      <div class="fact"><span>Списано в этом месяце</span><b>${rub(outMonth)}</b></div>
+      ${lastInvMove ? `<div class="fact ${invLoss > 0.5 ? 'bad' : ''}"><span>Инвентаризация ${fmtDay(lastInvMove.date)}</span><b>${invLoss > 0.5 ? 'недостача ' + rub(invLoss) : invLoss < -0.5 ? 'излишек ' + rub(-invLoss) : 'сошлось'}</b></div>` : ''}
+    </div>
     <div class="card">
-      <div class="tw"><table class="edit"><thead><tr><th>Продукт</th><th class="r">На начало</th><th class="r">Пришло</th><th class="r">Списано</th><th class="r">На конец</th>
-        <th class="r">По факту</th><th class="r">По техкартам</th><th class="r">Потери</th></tr></thead>
-      <tbody id="chk">${ings.map(i => {
-        const s = st(i.id);
-        return `<tr data-id="${i.id}"><td>${esc(i.name)}</td>
-          ${['start', 'in', 'out', 'end'].map(k => `<td class="r"><input class="n s" data-f="${k}" inputmode="decimal" value="${has(s[k]) ? num(s[k]) : ''}"><span class="unit">${i.unit}</span></td>`).join('')}
-          <td class="r" data-fact></td><td class="r muted" data-th></td><td class="r" data-diff></td></tr>`;
+      <h2>Остатки</h2>
+      ${tracked.length ? `<div class="tw"><table><thead><tr><th>Продукт</th><th class="r">Остаток</th><th class="r hide-m">Стоимость</th><th class="r">Хватит</th><th class="r hide-m">Пересчитан</th><th class="hide-m">Учёт</th></tr></thead><tbody>
+      ${tracked.map(i => {
+        const b = bal.get(i.id) || 0, pd = perDay.get(i.id) || 0, left = pd > 0 ? b / pd : Infinity;
+        return `<tr><td>${esc(i.name)}</td><td class="r ${b < 0 ? 'bad' : ''}">${fmtQ(b, i)}</td><td class="r hide-m">${rub(Math.max(0, b) * packOf(i))}</td>
+          <td class="r ${left < 2 ? 'bad' : left < 4 ? 'warn-t' : 'muted'}">${pd > 0 ? (left <= 0 ? 'закончился' : left > 60 ? 'больше 60 дн.' : `${(Math.floor(left * 10) / 10).toLocaleString('ru-RU')} дн.`) : ''}</td>
+          <td class="r muted hide-m">${lastInv.has(i.id) ? fmtDay(lastInv.get(i.id)) : '—'}</td><td class="muted small hide-m">${i.ctrl ? CTRL[i.ctrl] : ''}</td></tr>`;
       }).join('')}</tbody></table></div>
-      <p class="small muted">По факту = на начало + пришло − на конец. Списано — то, что оформлено актом списания: испортилось, упало, истёк срок. Потери = по факту − списано − по техкартам: перевес порций, неучтённые пробы, то, что ушло мимо кассы. Заполните хотя бы самые дорогие продукты, они сверху.</p>
+      <p class="small muted">«Хватит» — на сколько дней остатка при продажах как за последний период. Отрицательный остаток значит, что не внесён приход или техкарта занижает расход: проведите инвентаризацию.</p>` : '<p class="muted">Склад пока пуст. Начните с инвентаризации: пересчитайте, что есть, и внесите. Дальше остатки будут считаться сами.</p>'}
+    </div>
+    <div class="card">
+      <h2>Журнал</h2>
+      ${recent.length ? `<div class="tw"><table><thead><tr><th>Дата</th><th>Что</th><th class="hide-m">Подробно</th><th class="r">Сумма</th><th></th></tr></thead><tbody id="journal">
+      ${recent.map(m => {
+        const money = m.lines.reduce((a, l) => a + lineMoney(m, l), 0);
+        const what = { in: 'Приход' + (m.supplier ? ': ' + esc(m.supplier) : ''), out: 'Списание: ' + esc(m.reason || ''), sale: m.note ? esc(m.note) : 'Продажи смены', inv: 'Инвентаризация' }[m.type];
+        const det = m.lines.slice(0, 4).map(l => { const i = ingById(l.ing); return i ? `${esc(i.name)} ${fmtQ(+l.qty, i)}` : ''; }).join(', ') + (m.lines.length > 4 ? ` и ещё ${m.lines.length - 4}` : '');
+        const lossInv = m.type === 'inv' ? m.lines.reduce((a, l) => a + ((+l.expected || 0) - (+l.qty || 0)) * packOf(ingById(l.ing) || {}), 0) : 0;
+        return `<tr data-id="${m.id}"><td class="muted">${fmtDay(m.date)}</td><td>${what}</td><td class="muted small hide-m">${det}</td>
+          <td class="r ${m.type === 'inv' && lossInv > 0.5 ? 'bad' : ''}">${m.type === 'inv' ? (Math.abs(lossInv) > 0.5 ? (lossInv > 0 ? 'недостача ' : 'излишек ') + rub(Math.abs(lossInv)) : 'сошлось') : rub(money)}</td>
+          <td>${m.shift ? '' : '<button class="del" data-del>удалить</button>'}</td></tr>`;
+      }).join('')}</tbody></table></div>` : '<p class="muted">Записей пока нет.</p>'}
     </div>`;
 
-  function refresh() {
-    let lost = 0, outM = 0, worst = null, any = false;
-    view.querySelectorAll('#chk tr').forEach(tr => {
-      const i = ingById(tr.dataset.id), r = calc(i);
-      tr.querySelector('[data-fact]').textContent = r.filled ? fmtQ(r.fact, i) : '—';
-      tr.querySelector('[data-th]').textContent = fmtQ(r.theory, i);
-      const cell = tr.querySelector('[data-diff]');
-      if (!r.filled) { cell.textContent = ''; return; }
-      any = true; outM += r.outMoney;
-      const rel = r.theory ? r.lost / r.theory * 100 : 0;
-      cell.innerHTML = `${r.lost > 0 ? '+' : ''}${fmtQ(r.lost, i)}<br><span class="${r.lost > 0 && rel > 3 ? 'bad' : 'muted'}">${r.lost > 0 ? '+' : ''}${rub(r.money)}</span>`;
-      if (r.lost > 0) { lost += r.money; if (!worst || r.money > worst[1]) worst = [i, r.money, rel]; }
-    });
-    $('#chSum').innerHTML = !any ? '' : `<div class="card ${lost > 0 ? 'alert' : ''}">${lost > 0
-      ? `<p>Потери за период: <b class="bad">${rub(lost)}</b>${outM ? `, плюс списано по актам на ${rub(outM)}` : ''}. Фудкост по техкартам ${pct(Math.round(food / rev * 100))}, на деле около ${pct(Math.round((food + lost + outM) / rev * 100))}.</p>
-         <p>Больше всего уходит «${esc(worst[0].name)}»: на ${pct(Math.round(worst[2]))} больше нормы, ${rub(worst[1])}. Начните с контрольного взвешивания порций с этим продуктом.</p>`
-      : `<p class="good">Потерь сверх техкарт нет.${outM ? ` Списано по актам на ${rub(outM)}.` : ''}</p>`}</div>`;
-  }
-  refresh();
-  $('#chk').oninput = e => {
-    const tr = e.target.closest('tr'), f = e.target.dataset.f; if (!tr || !f) return;
-    const s = pt.stock[tr.dataset.id] = pt.stock[tr.dataset.id] || {};
-    if (e.target.value.trim() === '') delete s[f]; else s[f] = parseNum(e.target.value);
-    save(); refresh();
+  view.querySelectorAll('[data-form]').forEach(b => b.onclick = () => { stockForm = b.dataset.form; drawForm(); $('#form').scrollIntoView({ block: 'start' }); });
+  const jr = $('#journal');
+  if (jr) jr.onclick = e => {
+    const b = e.target.closest('[data-del]'); if (!b) return;
+    const id = b.closest('tr').dataset.id, snap = JSON.stringify(pt.moves);
+    pt.moves = pt.moves.filter(m => m.id !== id); save(); keepScroll(renderStock);
+    note('Запись удалена.', [['Ок', () => {}], ['Вернуть', () => { pt.moves = JSON.parse(snap); save(); renderStock(); }]]);
   };
+  if (stockForm) drawForm();
+
+  function drawForm() {
+    const box = $('#form'), type = stockForm;
+    const opts = sel => ings.map(i => `<option value="${i.id}"${i.id === sel ? ' selected' : ''}>${esc(i.name)}</option>`).join('');
+    const title = { in: 'Приход по накладной', out: 'Списание', inv: 'Инвентаризация' }[type];
+    let body = '';
+    if (type === 'inv') {
+      body = `<p class="muted small">Впишите, сколько есть на самом деле. Пустые строки не меняются. Справа — сколько должно быть по расчёту.</p>
+        <div class="tw"><table class="edit"><thead><tr><th>Продукт</th><th class="r">По расчёту</th><th class="r">Пересчитано</th></tr></thead><tbody id="fl">
+        ${ings.map(i => `<tr data-ing="${i.id}"><td>${esc(i.name)}</td><td class="r muted">${bal.has(i.id) ? fmtQ(bal.get(i.id), i) : '—'}</td><td class="r"><input class="n" data-f="qty" inputmode="decimal"><span class="unit">${i.unit}</span></td></tr>`).join('')}
+        </tbody></table></div>`;
+    } else {
+      body = `<div class="tw"><table class="edit"><thead><tr><th>Продукт</th><th class="r">Количество</th>${type === 'in' ? '<th class="r">Сумма, ₽</th>' : ''}<th></th></tr></thead><tbody id="fl">
+        ${[0, 1, 2].map(() => `<tr><td><select data-f="ing"><option value="">выберите</option>${opts('')}</select></td><td class="r"><input class="n" data-f="qty" inputmode="decimal"><span class="unit" data-u></span></td>${type === 'in' ? '<td class="r"><input class="n" data-f="sum" inputmode="decimal"></td>' : ''}<td></td></tr>`).join('')}
+        </tbody></table></div><div class="bar"><button class="ghost" id="addLine">Ещё строка</button></div>`;
+    }
+    box.innerHTML = `<div class="card form">
+      <div class="head"><h2>${title}</h2><button class="link" id="fClose">закрыть</button></div>
+      <div class="grid">
+        <label class="fld">Дата<span class="inp"><input id="fDate" type="date" value="${isoDay()}"></span></label>
+        ${type === 'in' ? '<label class="fld">Поставщик<span class="inp"><input id="fSup" placeholder="необязательно"></span></label>' : ''}
+        ${type === 'out' ? `<label class="fld">Причина<span class="inp"><select id="fReason">${REASONS.map(r => `<option>${r}</option>`).join('')}</select></span></label>` : ''}
+      </div>
+      ${body}
+      ${type === 'in' ? '<label class="check"><input type="checkbox" id="fPrice" checked> обновить цены продуктов по этой накладной</label>' : ''}
+      <div class="bar"><button class="main" id="fSave">Сохранить</button></div>
+    </div>`;
+    const fl = $('#fl');
+    const unitOf = tr => { const s = tr.querySelector('[data-f="ing"]'); const i = s && ingById(s.value); const u = tr.querySelector('[data-u]'); if (u) u.textContent = i ? i.unit : ''; };
+    fl.onchange = e => { const tr = e.target.closest('tr'); if (tr) unitOf(tr); };
+    const al = $('#addLine');
+    if (al) al.onclick = () => { const tr = fl.rows[0].cloneNode(true); tr.querySelectorAll('input').forEach(x => x.value = ''); tr.querySelector('select').value = ''; fl.appendChild(tr); unitOf(tr); };
+    $('#fClose').onclick = () => { stockForm = null; box.innerHTML = ''; };
+    $('#fSave').onclick = () => {
+      const date = $('#fDate').value || isoDay();
+      const m = { id: uid(), t: Date.now(), date, type, lines: [] };
+      if (type === 'inv') {
+        for (const tr of fl.rows) { const v = tr.querySelector('input').value.trim(); if (v !== '') m.lines.push({ ing: tr.dataset.ing, qty: parseNum(v) }); }
+        const before = balances(pt, mkey(m)).bal;
+        m.lines.forEach(l => l.expected = Math.round((before.get(l.ing) || 0) * 1000) / 1000);
+      } else {
+        for (const tr of fl.rows) {
+          const ing = tr.querySelector('[data-f="ing"]').value, qty = parseNum(tr.querySelector('[data-f="qty"]').value);
+          if (!ing || !(qty > 0)) continue;
+          const l = { ing, qty }; if (type === 'in') l.sum = parseNum(tr.querySelector('[data-f="sum"]').value);
+          m.lines.push(l);
+        }
+        if (type === 'in') m.supplier = $('#fSup').value.trim();
+        if (type === 'out') m.reason = $('#fReason').value;
+      }
+      if (!m.lines.length) { note('Заполните хотя бы одну строку: продукт и количество.'); return; }
+      let msg = [];
+      if (type === 'in' && $('#fPrice').checked) {
+        const ch = [];
+        for (const l of m.lines) {
+          const i = ingById(l.ing); if (!(l.sum > 0) || !(+i.qty > 0)) continue;
+          const newPack = l.sum / l.qty * +i.qty;
+          if (Math.abs(newPack - +i.price) > 0.005) { i.hist.push({ t: Date.now(), v: packOf(i) }); ch.push(`${esc(i.name)}: ${rub(+i.price)} стало ${rub(newPack)}`); i.price = Math.round(newPack * 100) / 100; }
+        }
+        if (ch.length) msg.push('Цены обновлены: ' + ch.join('; ') + '.');
+      }
+      const ctrl = k => [...new Set(m.lines.map(l => ingById(l.ing)).filter(i => i && i.ctrl === k).map(i => esc(i.name)))];
+      if (type === 'in' && ctrl('vsd').length) msg.push(`Под ветконтролем: ${ctrl('vsd').join(', ')}. Погасите ВСД в «Меркурии» при приёмке: за приёмку без ВСД организации грозит штраф 10–20 тыс. ₽.`);
+      if (type === 'in' && ctrl('mark').length) msg.push(`Маркированные товары: ${ctrl('mark').join(', ')}. Примите УПД в ЭДО, иначе коды не перейдут на вас в «Честном знаке».`);
+      if (type === 'out' && ctrl('mark').length) msg.push(`Списание маркированных товаров (${ctrl('mark').join(', ')}) нужно оформить и в «Честном знаке».`);
+      if (type === 'inv') {
+        const loss = m.lines.reduce((a, l) => a + ((+l.expected || 0) - l.qty) * packOf(ingById(l.ing)), 0);
+        msg.unshift(Math.abs(loss) < 0.5 ? 'Инвентаризация сошлась с расчётом.' : loss > 0 ? `Недостача на <b class="bad">${rub(loss)}</b> по сравнению с расчётом.` : `Излишек на ${rub(-loss)}: возможно, не все продажи списаны или техкарты завышены.`);
+      }
+      pt.moves.push(m); save(); stockForm = null; renderStock();
+      note(['Сохранено.', ...msg].join('<br>'));
+    };
+  }
+}
+
+/* =========================================================================
+   Деньги: смены, зарплата, сводка месяца, календарь платежей
+   ========================================================================= */
+const PAYS = [['cash', 'Наличные'], ['card', 'Карта'], ['sbp', 'СБП'], ['online', 'Оплата на сайте'], ['agg', 'Выплаты агрегатора']];
+const ROLES = ['Повар', 'Сушист', 'Оператор', 'Курьер', 'Администратор', 'Другое'];
+const KINDS = { work: 'трудовой договор', self: 'самозанятый', gph: 'договор ГПХ' };
+const shiftRev = s => PAYS.reduce((a, [k]) => a + (+s[k] || 0), 0);
+const shiftExp = s => (s.exp || []).reduce((a, x) => a + (+x.sum || 0), 0);
+const cashExpected = s => (+s.start || 0) + (+s.cash || 0) - shiftExp(s) - (+s.withdrawn || 0);
+function payFor(st, s) {
+  const w = (s.staff || []).find(x => x.id === st.id); if (!w) return 0;
+  return (+st.rate || 0) + shiftRev(s) * (+st.pct || 0) / 100 + (+w.orders || 0) * (+st.perOrder || 0);
+}
+let moneyMonth = isoDay().slice(0, 7), shiftEdit = null;
+
+function renderMoney() {
+  const pt = P();
+  const shifts = pt.shifts.filter(s => s.date.startsWith(moneyMonth)).sort((a, b) => a.date < b.date ? 1 : -1);
+  const rev = shifts.reduce((a, s) => a + shiftRev(s), 0);
+  const byPay = PAYS.map(([k, n]) => [n, shifts.reduce((a, s) => a + (+s[k] || 0), 0)]).filter(x => x[1]);
+  const cashOut = shifts.reduce((a, s) => a + shiftExp(s), 0);
+  const buys = pt.moves.filter(m => m.type === 'in' && m.date.startsWith(moneyMonth)).reduce((a, m) => a + m.lines.reduce((s, l) => s + (+l.sum || 0), 0), 0);
+  const pay = pt.staff.map(st => {
+    const due = shifts.reduce((a, s) => a + payFor(st, s), 0);
+    const paid = pt.paid.filter(p => p.staff === st.id && p.month === moneyMonth).reduce((a, p) => a + (+p.sum || 0), 0);
+    return { st, due, paid, n: shifts.filter(s => (s.staff || []).some(x => x.id === st.id)).length };
+  });
+  const payDue = pay.reduce((a, x) => a + x.due, 0);
+  const diffs = shifts.filter(s => s.counted !== undefined && s.counted !== '' && Math.abs(+s.counted - cashExpected(s)) >= 1);
+  const left = rev - buys - cashOut - payDue;
+
+  view.innerHTML = `
+    <div class="head"><h1>Деньги</h1><div class="bar tight"><input type="month" id="mon" value="${moneyMonth}"><button class="main" id="newShift">Закрыть смену</button></div></div>
+    <p class="lead">Точка «${esc(pt.name)}». Живые деньги: что пришло в кассу и на счёт, что ушло на закупку и людей. Расчётная прибыль по техкартам — во вкладке «Анализ».</p>
+    <div id="shiftForm"></div>
+    <div class="facts">
+      <div class="fact"><span>Выручка за ${shifts.length} ${plural(shifts.length, 'смену', 'смены', 'смен')}</span><b>${rub(rev)}</b></div>
+      <div class="fact"><span>Закупки по накладным</span><b>${rub(buys)}</b></div>
+      <div class="fact"><span>Зарплата начислена</span><b>${rub(payDue)}</b></div>
+      <div class="fact ${left < 0 ? 'bad' : ''}"><span>Осталось на аренду, налоги и прибыль</span><b>${rub(left)}</b></div>
+    </div>
+    <div class="card">
+      <h2>Месяц</h2>
+      <div class="tw"><table class="money">
+        <tr><td>Выручка</td><td class="r">${rub(rev)}</td><td class="muted">${byPay.map(([n, v]) => `${n.toLowerCase()} ${rub(v)}`).join(', ')}</td></tr>
+        <tr><td>Закупки по накладным</td><td class="r">−${rub(buys)}</td><td class="muted">${rev ? pct(Math.round(buys / rev * 100)) + ' от выручки' : ''}</td></tr>
+        <tr><td>Расходы из кассы</td><td class="r">−${rub(cashOut)}</td><td class="muted"></td></tr>
+        <tr><td>Зарплата</td><td class="r">−${rub(payDue)}</td><td class="muted">${rev ? pct(Math.round(payDue / rev * 100)) + ' от выручки' : ''}</td></tr>
+        <tr class="total"><td>Осталось</td><td class="r ${left < 0 ? 'bad' : 'good'}">${rub(left)}</td><td class="muted">до аренды, налогов и других постоянных расходов</td></tr>
+      </table></div>
+      ${diffs.length ? `<p class="warn">Не сошлась касса в ${diffs.length} ${plural(diffs.length, 'смене', 'сменах', 'сменах')}: ${diffs.map(s => `${fmtDay(s.date)} ${+s.counted - cashExpected(s) > 0 ? '+' : '−'}${rub(Math.abs(+s.counted - cashExpected(s)))}`).join(', ')}.</p>` : ''}
+    </div>
+
+    <div class="card">
+      <h2>Смены</h2>
+      ${shifts.length ? `<div class="tw"><table><thead><tr><th>Дата</th><th class="r">Выручка</th><th class="r hide-m">Расходы</th><th class="r">Касса</th><th class="hide-m">Кто работал</th><th></th></tr></thead><tbody id="shifts">
+        ${shifts.map(s => { const d = s.counted !== undefined && s.counted !== '' ? +s.counted - cashExpected(s) : null; return `<tr data-id="${s.id}"><td>${fmtDay(s.date)}</td><td class="r">${rub(shiftRev(s))}</td><td class="r hide-m">${shiftExp(s) ? rub(shiftExp(s)) : ''}</td>
+          <td class="r ${d !== null && Math.abs(d) >= 1 ? 'bad' : 'muted'}">${d === null ? '—' : Math.abs(d) < 1 ? 'сошлась' : (d > 0 ? '+' : '−') + rub(Math.abs(d))}</td>
+          <td class="muted small hide-m">${(s.staff || []).map(w => { const st = pt.staff.find(x => x.id === w.id); return st ? esc(st.name) : ''; }).filter(Boolean).join(', ')}</td>
+          <td class="r"><button class="del" data-edit>изменить</button><button class="del" data-del>удалить</button></td></tr>`; }).join('')}
+      </tbody></table></div>` : '<p class="muted">В этом месяце смен нет. Закрывайте смену в конце дня: выручка по видам оплаты, расходы из кассы, кто работал и что продано.</p>'}
+    </div>
+
+    <div class="card">
+      <h2>Зарплата</h2>
+      ${pt.staff.length ? `<div class="tw"><table><thead><tr><th>Сотрудник</th><th class="r">Смен</th><th class="r">Начислено</th><th class="r">Выплачено</th><th class="r">К выплате</th><th></th></tr></thead><tbody id="payroll">
+        ${pay.map(x => `<tr data-id="${x.st.id}"><td>${esc(x.st.name)} <span class="muted small">${esc(x.st.role)}</span></td><td class="r">${x.n}</td><td class="r">${rub(x.due)}</td><td class="r">${rub(x.paid)}</td>
+          <td class="r ${x.due - x.paid > 0.5 ? 'accent' : 'muted'}"><b>${rub(Math.max(0, x.due - x.paid))}</b></td><td class="r">${x.due - x.paid > 0.5 ? '<button class="ghost sm" data-pay>Выплатил</button>' : ''}</td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="muted">Добавьте сотрудников ниже, и зарплата будет считаться по сменам сама.</p>'}
+      ${pt.staff.some(s => s.kind === 'self') ? '<p class="warn">Самозанятому на каждую выплату нужен чек из «Мой налог». Если человек работает по графику и подчиняется как сотрудник, налоговая может признать отношения трудовыми.</p>' : ''}
+      ${pt.staff.some(s => s.kind === 'work') ? '<p class="small muted">По трудовому договору из начисленного удерживается НДФЛ, а страховые взносы работодатель платит сверху. Заложите их в постоянные расходы во вкладке «Расходы».</p>' : ''}
+      <h3 style="margin-top:14px">Сотрудники и условия</h3>
+      <div class="tw"><table class="edit"><thead><tr><th>Имя</th><th>Должность</th><th>Оформление</th><th class="r">За смену, ₽</th><th class="r">% выручки</th><th class="r">За заказ, ₽</th><th></th></tr></thead><tbody id="staff">
+        ${pt.staff.map(s => `<tr data-id="${s.id}"><td><input data-f="name" value="${esc(s.name)}" placeholder="Имя"></td>
+          <td><select data-f="role">${ROLES.map(r => `<option${r === s.role ? ' selected' : ''}>${r}</option>`).join('')}</select></td>
+          <td><select data-f="kind">${Object.entries(KINDS).map(([k, n]) => `<option value="${k}"${k === s.kind ? ' selected' : ''}>${n}</option>`).join('')}</select></td>
+          <td class="r"><input class="n" data-f="rate" inputmode="numeric" value="${+s.rate || ''}"></td>
+          <td class="r"><input class="n s" data-f="pct" inputmode="decimal" value="${num(s.pct || 0)}"></td>
+          <td class="r"><input class="n s" data-f="perOrder" inputmode="numeric" value="${+s.perOrder || ''}"></td>
+          <td><button class="del" data-del>убрать</button></td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="bar"><button class="ghost" id="addStaff">Добавить сотрудника</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Платежи на 60 дней</h2>
+      ${calendarHtml(pt)}
+    </div>`;
+
+  $('#mon').onchange = e => { moneyMonth = e.target.value || isoDay().slice(0, 7); renderMoney(); };
+  $('#newShift').onclick = () => { shiftEdit = { id: uid(), date: isoDay(), staff: [], exp: [], dishes: {} }; drawShift(); };
+  const sh = $('#shifts');
+  if (sh) sh.onclick = e => {
+    const tr = e.target.closest('tr'); if (!tr) return;
+    const s = pt.shifts.find(x => x.id === tr.dataset.id);
+    if (e.target.closest('[data-edit]')) { shiftEdit = JSON.parse(JSON.stringify(s)); drawShift(); }
+    if (e.target.closest('[data-del]')) {
+      const snap = JSON.stringify({ shifts: pt.shifts, moves: pt.moves });
+      pt.shifts = pt.shifts.filter(x => x.id !== s.id); pt.moves = pt.moves.filter(m => m.shift !== s.id); save(); keepScroll(renderMoney);
+      note(`Смена ${fmtDay(s.date)} удалена вместе со списанием продаж со склада.`, [['Ок', () => {}], ['Вернуть', () => { const o = JSON.parse(snap); pt.shifts = o.shifts; pt.moves = o.moves; save(); renderMoney(); }]]);
+    }
+  };
+  const pr = $('#payroll');
+  if (pr) pr.onclick = e => {
+    if (!e.target.closest('[data-pay]')) return;
+    const x = pay.find(p => p.st.id === e.target.closest('tr').dataset.id);
+    const sum = Math.round((x.due - x.paid) * 100) / 100;
+    pt.paid.push({ id: uid(), staff: x.st.id, month: moneyMonth, sum, date: isoDay() }); save(); keepScroll(renderMoney);
+    note(`Отмечено: ${esc(x.st.name)} получил ${rub(sum)}.`, [['Ок', () => {}], ['Отменить', () => { pt.paid.pop(); save(); renderMoney(); }]]);
+  };
+  const stb = $('#staff');
+  stb.onchange = e => {
+    const tr = e.target.closest('tr'), f = e.target.dataset.f; if (!tr || !f) return;
+    const s = pt.staff.find(x => x.id === tr.dataset.id);
+    s[f] = ['name', 'role', 'kind'].includes(f) ? e.target.value : parseNum(e.target.value);
+    save(); keepScroll(renderMoney);
+  };
+  stb.onclick = e => {
+    if (!e.target.closest('[data-del]')) return;
+    const id = e.target.closest('tr').dataset.id, s = pt.staff.find(x => x.id === id), snap = JSON.stringify(pt.staff);
+    pt.staff = pt.staff.filter(x => x.id !== id); save(); keepScroll(renderMoney);
+    note(`${esc(s.name || 'Сотрудник')} убран из списка. Старые смены остаются.`, [['Ок', () => {}], ['Вернуть', () => { pt.staff = JSON.parse(snap); save(); renderMoney(); }]]);
+  };
+  $('#addStaff').onclick = () => {
+    pt.staff.push({ id: uid(), name: '', role: 'Повар', kind: 'work', rate: 0, pct: 0, perOrder: 0 }); save(); keepScroll(renderMoney);
+    const ins = view.querySelectorAll('#staff input[data-f="name"]'); ins[ins.length - 1].focus();
+  };
+  if (shiftEdit) drawShift();
+
+  function drawShift() {
+    const s = shiftEdit, box = $('#shiftForm');
+    const isNew = !pt.shifts.some(x => x.id === s.id);
+    const prev = pt.shifts.filter(x => x.date < s.date).sort((a, b) => a.date < b.date ? 1 : -1)[0];
+    if (isNew && s.start === undefined && prev && prev.counted !== undefined && prev.counted !== '') s.start = +prev.counted;
+    const dishesTxt = Object.entries(s.dishes || {}).map(([id, q]) => { const d = dishById(id); return d ? `${d.name}\t${q}` : ''; }).filter(Boolean).join('\n');
+    box.innerHTML = `<div class="card form">
+      <div class="head"><h2>${isNew ? 'Закрыть смену' : 'Смена ' + fmtDay(s.date)}</h2><button class="link" id="sClose">закрыть</button></div>
+      <div class="grid">
+        <label class="fld">Дата<span class="inp"><input id="sDate" type="date" value="${s.date}"></span></label>
+        ${PAYS.map(([k, n]) => `<label class="fld">${n}<span class="inp"><input data-k="${k}" type="number" min="0" step="any" value="${s[k] ?? ''}"><span class="unit">₽</span></span></label>`).join('')}
+      </div>
+      <h3 style="margin-top:14px">Наличные в кассе</h3>
+      <div class="grid">
+        <label class="fld">На начало смены<span class="inp"><input data-k="start" type="number" min="0" step="any" value="${s.start ?? ''}"><span class="unit">₽</span></span></label>
+        <label class="fld">Изъято или сдано в банк<span class="inp"><input data-k="withdrawn" type="number" min="0" step="any" value="${s.withdrawn ?? ''}"><span class="unit">₽</span></span></label>
+        <label class="fld">Пересчитано в конце<span class="inp"><input data-k="counted" type="number" min="0" step="any" value="${s.counted ?? ''}"><span class="unit">₽</span></span><span class="hint" id="sCash"></span></label>
+      </div>
+      <h3 style="margin-top:14px">Расходы из кассы</h3>
+      <div class="tw"><table class="edit"><tbody id="sExp">${(s.exp.length ? s.exp : [{ name: '', sum: '' }]).map(x => `<tr><td><input data-e="name" value="${esc(x.name)}" placeholder="Например, хлеб в магазине"></td><td class="r"><input class="n" data-e="sum" inputmode="decimal" value="${x.sum || ''}"><span class="unit">₽</span></td></tr>`).join('')}</tbody></table></div>
+      <div class="bar"><button class="ghost" id="sAddExp">Ещё расход</button></div>
+      ${pt.staff.length ? `<h3>Кто работал</h3><div class="tw"><table class="edit"><tbody id="sStaff">${pt.staff.map(st => { const w = s.staff.find(x => x.id === st.id); return `<tr data-id="${st.id}"><td><label class="check" style="margin:0"><input type="checkbox"${w ? ' checked' : ''}> ${esc(st.name || 'Без имени')} <span class="muted small">${esc(st.role)}</span></label></td>
+        <td class="r">${+st.perOrder ? `<input class="n s" data-o inputmode="numeric" value="${w ? w.orders || '' : ''}" placeholder="0"><span class="unit">заказов</span>` : ''}</td><td class="r muted" data-p></td></tr>`; }).join('')}</tbody></table></div>` : '<p class="muted small">Сотрудников пока нет, их можно добавить ниже в «Зарплате».</p>'}
+      <h3 style="margin-top:14px">Что продано</h3>
+      <p class="muted small">Вставьте отчёт кассы за смену: название и количество. Продукты по техкартам спишутся со склада.</p>
+      <textarea id="sDishes" rows="4" placeholder="Филадельфия	12&#10;Калифорния	8">${esc(dishesTxt)}</textarea>
+      <div class="bar"><button class="main" id="sSave">Сохранить смену</button><span class="muted" id="sTotal"></span></div>
+    </div>`;
+    box.scrollIntoView({ block: 'start' });
+    const read = () => {
+      s.date = $('#sDate').value || isoDay();
+      box.querySelectorAll('[data-k]').forEach(i => { const v = i.value.trim(); if (v === '') delete s[i.dataset.k]; else s[i.dataset.k] = parseNum(v); });
+      s.exp = [...box.querySelectorAll('#sExp tr')].map(tr => ({ name: tr.querySelector('[data-e="name"]').value.trim(), sum: parseNum(tr.querySelector('[data-e="sum"]').value) })).filter(x => x.name || x.sum);
+      s.staff = [...box.querySelectorAll('#sStaff tr')].filter(tr => tr.querySelector('input[type=checkbox]').checked)
+        .map(tr => { const o = tr.querySelector('[data-o]'); return { id: tr.dataset.id, orders: o ? Math.round(parseNum(o.value)) : 0 }; });
+    };
+    const live = () => {
+      read();
+      const exp = cashExpected(s);
+      $('#sCash').innerHTML = `по расчёту должно быть ${rub(exp)}` + (s.counted !== undefined ? (Math.abs(s.counted - exp) < 1 ? ', <span class="good">сходится</span>' : `, <span class="bad">${s.counted > exp ? 'излишек' : 'недостача'} ${rub(Math.abs(s.counted - exp))}</span>`) : '');
+      box.querySelectorAll('#sStaff tr').forEach(tr => { const st = pt.staff.find(x => x.id === tr.dataset.id); tr.querySelector('[data-p]').textContent = s.staff.some(w => w.id === st.id) ? rub(payFor(st, s)) : ''; });
+      $('#sTotal').textContent = `Выручка ${rub(shiftRev(s))}`;
+    };
+    box.oninput = box.onchange = live; live();
+    $('#sAddExp').onclick = () => { read(); s.exp.push({ name: '', sum: '' }); drawShift(); };
+    $('#sClose').onclick = () => { shiftEdit = null; box.innerHTML = ''; };
+    $('#sSave').onclick = () => {
+      read();
+      const byName = new Map(db.dishes.map(d => [key(d.name), d])), miss = [];
+      s.dishes = {};
+      for (const line of $('#sDishes').value.split('\n')) {
+        const m = line.trim().match(/^(.+?)[\t;,\s]+(\d+(?:[.,]\d+)?)\s*(?:шт\.?|порц\.?)?$/i);
+        if (!m) continue;
+        const d = byName.get(key(m[1].replace(/[\t;,]+$/, '')));
+        if (!d) { miss.push(m[1].trim()); continue; }
+        s.dishes[d.id] = (s.dishes[d.id] || 0) + Math.round(parseNum(m[2]));
+      }
+      pt.shifts = pt.shifts.filter(x => x.id !== s.id).concat([s]);
+      pt.moves = pt.moves.filter(m => m.shift !== s.id);
+      const lines = salesToLines(s.dishes);
+      if (lines.length) pt.moves.push({ id: uid(), t: Date.now(), date: s.date, type: 'sale', shift: s.id, lines });
+      save(); shiftEdit = null; moneyMonth = s.date.slice(0, 7); renderMoney();
+      const msg = [`Смена ${fmtDay(s.date)} сохранена: выручка ${rub(shiftRev(s))}.`];
+      if (lines.length) msg.push(`Со склада списаны продукты по техкартам: ${lines.length} ${plural(lines.length, 'позиция', 'позиции', 'позиций')}.`);
+      if (miss.length) msg.push(`Нет в меню: ${miss.slice(0, 8).map(esc).join(', ')}.`);
+      note(msg.join('<br>'));
+    };
+  }
+}
+
+// Календарь: постоянные расходы с днём оплаты и налоговые сроки (ЕНП, 2026)
+function calendarHtml(pt) {
+  const t0 = isoDay(), t1 = addDays(t0, 60), items = [];
+  const e = econ(pt), perMonthTax = e.tax / e.D * 30, perMonthVat = e.vat / e.D * 30;
+  const d0 = dayOf(t0);
+  for (let k = 0; k < 3; k++) {
+    const y = d0.getFullYear(), m = d0.getMonth() + k, last = new Date(y, m + 1, 0).getDate();
+    for (const f of pt.fixed) if (+f.day >= 1) items.push({ date: isoDay(new Date(y, m, Math.min(+f.day, last))), name: f.name || 'Расход', sum: +f.sum || 0 });
+  }
+  const years = [d0.getFullYear(), d0.getFullYear() + 1];
+  const t = pt.tax, usn = t.mode === 'usn6' || t.mode === 'usn15';
+  for (const y of years) {
+    if (usn) {
+      items.push({ date: `${y}-04-28`, name: 'УСН: аванс за I квартал', sum: perMonthTax * 3, tax: 1 });
+      items.push({ date: `${y}-07-28`, name: 'УСН: аванс за полугодие', sum: perMonthTax * 3, tax: 1 });
+      items.push({ date: `${y}-10-28`, name: 'УСН: аванс за 9 месяцев', sum: perMonthTax * 3, tax: 1 });
+      items.push({ date: t.entity === 'org' ? `${y}-03-28` : `${y}-04-28`, name: `УСН за ${y - 1} год`, sum: perMonthTax * 3, tax: 1 });
+    }
+    if (usn && +t.vat) for (let mo = 1; mo <= 12; mo++) items.push({ date: `${y}-${pad(mo)}-28`, name: 'НДС: треть за прошлый квартал', sum: perMonthVat, tax: 1 });
+    if (t.entity !== 'org') {
+      items.push({ date: `${y}-12-28`, name: `Фиксированные взносы ИП за ${y}`, sum: y === 2026 ? 57390 : NaN, tax: 1 });
+      items.push({ date: `${y}-07-01`, name: `Взнос ИП 1% с дохода выше 300 тыс. ₽ за ${y - 1}`, sum: Math.max(0, (e.annual - 300000) * 0.01), tax: 1 });
+    }
+  }
+  const list = items.filter(x => x.date >= t0 && x.date <= t1).sort((a, b) => a.date < b.date ? -1 : 1);
+  if (!list.length) return '<p class="muted">В ближайшие 60 дней платежей нет. Укажите день оплаты у постоянных расходов во вкладке «Расходы».</p>';
+  const days = s => Math.round((dayOf(s) - dayOf(t0)) / 864e5);
+  return `<div class="tw"><table><tbody>${list.map(x => `<tr><td class="muted nowrap">${fmtDay(x.date)}</td><td>${esc(x.name)}${x.tax ? ' <span class="tag">налог</span>' : ''}</td>
+    <td class="r">${isFinite(x.sum) && x.sum > 0.5 ? (x.tax && !/^Фикс/.test(x.name) ? 'около ' : '') + rub(x.sum) : ''}</td><td class="r muted small">${days(x.date) === 0 ? 'сегодня' : 'через ' + days(x.date) + ' дн.'}</td></tr>`).join('')}</tbody></table></div>
+    <p class="small muted">Суммы налогов примерные: по продажам текущего периода. Налоги платятся единым налоговым платежом. Если 28-е выпадает на выходной, срок переносится на ближайший рабочий день. ${pt.tax.mode === 'fixed' ? 'Сроки оплаты патента зависят от его срока: смотрите в самом патенте.' : ''}</p>`;
 }
 
 /* =========================================================================
@@ -984,19 +1391,19 @@ function renderBuy() {
   const Pl = pt.plan;
   view.innerHTML = `
     <div class="head"><h1>Закупка</h1><button class="main" id="copyBuy">Скопировать для поставщика</button></div>
-    <p class="lead">Точка «${esc(pt.name)}». Сколько купить, если продажи пойдут как за последние ${days(pt.sales.days)}. Остатки подставляются из «Сверки», их можно поправить.</p>
+    <p class="lead">Точка «${esc(pt.name)}». Сколько купить, если продажи пойдут как за последние ${days(pt.sales.days)}. Остатки берутся со склада.</p>
     <div class="card">
       <div class="bar"><label>На сколько дней <input id="pDays" type="number" min="1" max="60" value="${Pl.days}" class="s"></label>
         <label>Запас <input id="pRes" type="number" min="0" max="100" value="${Pl.reserve}" class="s"> %</label></div>
       <div class="tw"><table class="edit"><thead><tr><th>Продукт</th><th class="r">Нужно</th><th class="r">Есть</th><th class="r">Купить</th><th class="r hide-m">Упаковок</th><th class="r">Сумма</th></tr></thead>
       <tbody id="buy"></tbody><tfoot><tr class="total"><td colspan="5">Итого</td><td class="r" id="buyTot"></td></tr></tfoot></table></div>
-      <p class="small muted">Нужно — брутто, с учётом отхода и запаса. Купить округляется вверх до целых упаковок.</p>
+      <p class="small muted">Нужно — брутто, с учётом отхода и запаса. Купить округляется вверх до целых упаковок. Если остатки неточные, проведите инвентаризацию во вкладке «Склад».</p>
     </div>`;
   const rows = () => {
-    const u = salesUsage(pt, Pl.days / (+pt.sales.days || 30) * (1 + Pl.reserve / 100));
+    const u = salesUsage(pt, Pl.days / (+pt.sales.days || 30) * (1 + Pl.reserve / 100)), bal = balances(pt).bal;
     return db.ing.filter(i => u.get(i.id) > 0).map(i => {
-      const need = toUnit(u.get(i.id), i), s = pt.stock[i.id] || {};
-      const have = s.now !== undefined ? +s.now : s.end !== undefined ? +s.end : 0;
+      const need = toUnit(u.get(i.id), i);
+      const have = Math.max(0, bal.get(i.id) || 0);
       const buy = Math.max(0, need - have), packs = +i.qty > 0 ? Math.ceil(buy / +i.qty - 1e-9) : 0;
       return { i, need, have, buy, packs, sum: packs * (+i.price || 0) };
     }).sort((a, b) => b.sum - a.sum);
@@ -1004,7 +1411,7 @@ function renderBuy() {
   const draw = () => {
     const r = rows();
     $('#buy').innerHTML = r.map(x => `<tr data-id="${x.i.id}"><td>${esc(x.i.name)}</td><td class="r muted">${fmtQ(x.need, x.i)}</td>
-      <td class="r"><input class="n s" inputmode="decimal" value="${num(x.have)}"><span class="unit">${x.i.unit}</span></td>
+      <td class="r muted">${fmtQ(x.have, x.i)}</td>
       <td class="r"><b>${x.packs ? fmtQ(x.packs * x.i.qty, x.i) : '—'}</b></td><td class="r muted hide-m">${x.packs ? x.packs + ' × ' + num(x.i.qty) + ' ' + x.i.unit : ''}</td>
       <td class="r">${x.sum ? rub(x.sum) : ''}</td></tr>`).join('');
     $('#buyTot').textContent = rub(r.reduce((a, x) => a + x.sum, 0));
@@ -1012,11 +1419,6 @@ function renderBuy() {
   draw();
   $('#pDays').oninput = e => { const v = parseNum(e.target.value); if (v >= 1) { Pl.days = v; save(); draw(); } };
   $('#pRes').oninput = e => { Pl.reserve = Math.max(0, parseNum(e.target.value)); save(); draw(); };
-  $('#buy').onchange = e => {
-    const tr = e.target.closest('tr'); if (!tr) return;
-    const s = pt.stock[tr.dataset.id] = pt.stock[tr.dataset.id] || {};
-    s.now = parseNum(e.target.value); save(); draw();
-  };
   $('#copyBuy').onclick = e => {
     const r = rows().filter(x => x.packs);
     copyText(`${db.org ? db.org + ', ' : ''}${pt.name}. Заказ на ${days(Pl.days)}:\n` + r.map(x => `${x.i.name}: ${num(x.packs * x.i.qty)} ${x.i.unit}`).join('\n'), e.target);
@@ -1212,18 +1614,21 @@ function syncHeader() {
 }
 $('#point').onchange = e => { db.cur = e.target.value; save(); route(true); };
 
-const TABS = { menu: renderMenu, products: renderProducts, sales: renderSales, analysis: renderAnalysis, check: renderCheck, buy: renderBuy, costs: renderCosts, settings: renderSettings };
+const TABS = { menu: renderMenu, products: renderProducts, stock: renderStock, sales: renderSales, money: renderMoney, analysis: renderAnalysis, buy: renderBuy, costs: renderCosts, settings: renderSettings };
 function route(keep) {
   let [tab, id] = (location.hash.slice(1) || 'menu').split('/');
   if (tab === 'data') tab = 'settings';
+  if (tab === 'check') tab = 'stock';
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('on', a.dataset.tab === (tab === 'dish' ? 'menu' : tab)));
   if (tab === 'dish') renderDish(id);
   else (TABS[tab] || renderMenu)();
   if (keep !== true) scrollTo(0, 0);
 }
 addEventListener('hashchange', () => location.hash.startsWith('#share=') ? takeShare() : route());
+try { db = JSON.parse(localStorage.getItem(KEY)); db = db ? migrate(db) : null; } catch (e) { db = null; }
+if (!db) db = demo();
 syncHeader();
 if (location.hash.startsWith('#share=')) takeShare(); else route();
 
-if (TEST) window.__fk = { get db() { return db; }, set db(v) { db = v; }, stats, econ, rates, cost, unitPrice, usage, importMenu, migrate, roundPrice, P };
+if (TEST) window.__fk = { get db() { return db; }, set db(v) { db = v; }, stats, econ, rates, cost, unitPrice, usage, importMenu, migrate, roundPrice, P, balances };
 })();

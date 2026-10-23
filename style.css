@@ -160,6 +160,20 @@ table.money tr.total td{font-weight:800;font-size:18px;border-bottom:0}
 .report{background:var(--bg);padding:12px 16px;margin:12px 0 0;border-radius:var(--r-s)}
 .report ul{margin:6px 0 0;padding-left:18px}
 
+/* склад и деньги */
+.bar.tight{margin:0}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,45%),1fr));gap:12px}
+.fact{background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);padding:14px 18px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.fact span{font-size:13px;color:var(--ink-2);font-weight:700}
+.fact b{font-size:22px;font-weight:800}
+.fact.bad b{color:var(--bad)}
+.card.form{outline:2px solid var(--accent);outline-offset:-2px}
+.card.form .head{margin-bottom:10px}
+button.sm{padding:5px 12px;font-size:13px}
+.warn-t{color:var(--q-horse);font-weight:700}
+.nowrap{white-space:nowrap}
+input[type=date],input[type=month]{font-weight:700}
+
 /* анализ */
 .quads{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:10px}
 .quad{background:var(--bg);border-radius:var(--r-s);padding:12px 14px;min-width:0}
@@ -187,6 +201,9 @@ svg a:hover .dot{stroke:var(--ink);stroke-width:2}
   .card{padding:14px}
   .hide-m{display:none}
   .show-m{display:inline}
+  .fact{padding:12px 14px}
+  .fact b{font-size:18px}
+  .fact span{font-size:12px}
   table.money td:nth-child(3){display:none}
   table.money{min-width:100%}
   table.money td{padding-right:8px}
